@@ -32,6 +32,46 @@ const STATUS_BG = {
 }
 
 const FROZEN = ['БАН','На смену','Отмена запуска']
+const GROUPS = ['SL-USA','GS-USA','MM-NZ','OTHER']
+
+function groupOf(name) {
+  if (!name) return 'OTHER'
+  if (name.startsWith('SL-USA')) return 'SL-USA'
+  if (name.startsWith('GS-USA')) return 'GS-USA'
+  if (name.startsWith('MM-NZ')) return 'MM-NZ'
+  return 'OTHER'
+}
+
+// Реестр всех колонок таблицы
+const ALL_COLUMNS = [
+  { key:'name',       label:'Аккаунт',    width:150, align:'l' },
+  { key:'status',     label:'Статус',     width:130, align:'l' },
+  { key:'geo',        label:'Гео',        width:80,  align:'l' },
+  { key:'funnel',     label:'Воронка',    width:80,  align:'l' },
+  { key:'creo',       label:'Крео',       width:100, align:'l' },
+  { key:'today_cost', label:'Сегодня $',  width:75,  align:'r' },
+  { key:'yest_cost',  label:'Вчера $',    width:75,  align:'r' },
+  { key:'clicks',     label:'Клики',      width:55,  align:'r' },
+  { key:'conv',       label:'Конверсии',  width:60,  align:'r' },
+  { key:'cpa',        label:'CPA',        width:70,  align:'r' },
+  { key:'card',       label:'Карта',      width:80,  align:'l' },
+  { key:'zalivshik',  label:'Заливщик',   width:80,  align:'l' },
+  { key:'format',     label:'Формат',     width:70,  align:'l' },
+  { key:'launch_date',label:'Дата пуска', width:100, align:'l' },
+  { key:'crut_date',  label:'Дата крута', width:100, align:'l' },
+  { key:'ban_date',   label:'Дата бана',  width:100, align:'l' },
+  { key:'dis',        label:'Дизапрув',   width:160, align:'l' },
+  { key:'comment',    label:'Комментарий',width:120, align:'l' },
+  { key:'google_tag', label:'Google Tag', width:120, align:'l' },
+]
+const COLMAP = Object.fromEntries(ALL_COLUMNS.map(c => [c.key, c]))
+const ALL_KEYS = ALL_COLUMNS.map(c => c.key)
+const DEFAULT_ORDER = [
+  'name','status','geo','funnel','creo','today_cost','yest_cost','clicks','conv','cpa',
+  'card','zalivshik','format','launch_date','crut_date','ban_date','dis','comment','google_tag'
+]
+const DEFAULT_VISIBLE = ['name','status','geo','funnel','creo','today_cost','yest_cost','clicks','conv','cpa','card','zalivshik','dis','comment']
+const defaultVisibleMap = () => Object.fromEntries(ALL_KEYS.map(k => [k, DEFAULT_VISIBLE.includes(k)]))
 
 const EMPTY_FORM = {
   name:'', google_ads_id:'', currency:'USD', status:'Пуск', zalivshik:'',
@@ -48,17 +88,55 @@ function api(path, opts={}) {
   }).then(r => r.json())
 }
 
+function money(v) { const n=+v||0; if(!n) return '—'; return n>=1000?'$'+Math.round(n).toLocaleString('ru'):'$'+n.toFixed(0) }
+
+function metricsOf(a, summary) {
+  const m = summary[a.id] || {}
+  const t = m.today || {}, y = m.yesterday || {}
+  return {
+    today_cost: +t.cost_usd || 0,
+    yest_cost: +y.cost_usd || 0,
+    clicks: +t.clicks || 0,
+    conv: +t.conversions || 0,
+    cpa: +t.cpa || 0,
+  }
+}
+
+function sortVal(key, a, summary) {
+  const mt = metricsOf(a, summary)
+  switch (key) {
+    case 'created_at': return new Date(a.created_at).getTime() || 0
+    case 'today_cost': return mt.today_cost
+    case 'yest_cost': return mt.yest_cost
+    case 'clicks': return mt.clicks
+    case 'conv': return mt.conv
+    case 'cpa': return mt.cpa
+    case 'name': return a.name || ''
+    case 'status': return a.status || ''
+    case 'geo': return a.geo || ''
+    case 'funnel': return a.funnel || ''
+    case 'creo': return a.creo || ''
+    case 'format': return a.format || ''
+    case 'card': return a.card || ''
+    case 'zalivshik': return a.zalivshik || ''
+    case 'launch_date': return a.launch_date || ''
+    case 'crut_date': return a.crut_date || ''
+    case 'ban_date': return a.ban_date || ''
+    case 'dis': return a.dis_reason || ''
+    case 'comment': return a.comment || ''
+    case 'google_tag': return a.google_tag || ''
+    default: return ''
+  }
+}
+
 export default function Home() {
   const [accounts, setAccounts] = useState([])
   const [loading, setLoading] = useState(true)
   const [dark, setDark] = useState(true)
   const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState('all')
-  const [sortBy, setSortBy] = useState('created_at')
   const [showAdd, setShowAdd] = useState(false)
   const [form, setForm] = useState(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
-  const [selected, setSelected] = useState(null)
   const [drawer, setDrawer] = useState(null)
   const [drawerMetrics, setDrawerMetrics] = useState([])
   const [drawerHistory, setDrawerHistory] = useState([])
@@ -68,17 +146,67 @@ export default function Home() {
   const [syncTime, setSyncTime] = useState('')
   const [statusPopup, setStatusPopup] = useState(null)
   const [metricsSummary, setMetricsSummary] = useState({})
-  const popupRef = useRef(null)
+
+  // ── Фильтры ──
+  const [statusSel, setStatusSel] = useState([])
+  const [geoSel, setGeoSel] = useState([])
+  const [zalivSel, setZalivSel] = useState([])
+  const [groupSel, setGroupSel] = useState([])
+  const [funnelSel, setFunnelSel] = useState([])
+  const [formatSel, setFormatSel] = useState('all')
+  const [launchFrom, setLaunchFrom] = useState('')
+  const [launchTo, setLaunchTo] = useState('')
+  const [showFilters, setShowFilters] = useState(false)
+
+  // ── Колонки ──
+  const [colOrder, setColOrder] = useState(DEFAULT_ORDER)
+  const [colVisible, setColVisible] = useState(defaultVisibleMap())
+  const [showCols, setShowCols] = useState(false)
+  const [dragIdx, setDragIdx] = useState(null)
+
+  // ── Сортировка / страницы ──
+  const [sort, setSort] = useState({ key:'created_at', dir:'desc' })
+  const [pageSize, setPageSize] = useState(50)
+  const [page, setPage] = useState(1)
+
+  const loaded = useRef(false)
 
   useEffect(() => {
     const t = localStorage.getItem('zcrm_theme')
     if (t) setDark(t === 'dark')
+    try {
+      const s = JSON.parse(localStorage.getItem('zcrm_table_settings') || '{}')
+      if (Array.isArray(s.statusSel)) setStatusSel(s.statusSel)
+      if (Array.isArray(s.geoSel)) setGeoSel(s.geoSel)
+      if (Array.isArray(s.zalivSel)) setZalivSel(s.zalivSel)
+      if (Array.isArray(s.groupSel)) setGroupSel(s.groupSel)
+      if (Array.isArray(s.funnelSel)) setFunnelSel(s.funnelSel)
+      if (s.formatSel) setFormatSel(s.formatSel)
+      if (s.launchFrom) setLaunchFrom(s.launchFrom)
+      if (s.launchTo) setLaunchTo(s.launchTo)
+      if (Array.isArray(s.colOrder)) {
+        const merged = [...s.colOrder.filter(k => COLMAP[k]), ...ALL_KEYS.filter(k => !s.colOrder.includes(k))]
+        setColOrder(merged)
+      }
+      if (s.colVisible) setColVisible({ ...defaultVisibleMap(), ...s.colVisible })
+      if (s.pageSize) setPageSize(s.pageSize)
+      if (s.sort && s.sort.key) setSort(s.sort)
+    } catch {}
+    loaded.current = true
     load()
   }, [])
 
+  useEffect(() => { document.body.className = dark ? 'dark' : 'light' }, [dark])
+
   useEffect(() => {
-    document.body.className = dark ? 'dark' : 'light'
-  }, [dark])
+    if (!loaded.current) return
+    localStorage.setItem('zcrm_table_settings', JSON.stringify({
+      statusSel, geoSel, zalivSel, groupSel, funnelSel, formatSel,
+      launchFrom, launchTo, colOrder, colVisible, pageSize, sort,
+    }))
+  }, [statusSel, geoSel, zalivSel, groupSel, funnelSel, formatSel, launchFrom, launchTo, colOrder, colVisible, pageSize, sort])
+
+  useEffect(() => { setPage(1) }, [statusSel, geoSel, zalivSel, groupSel, funnelSel, formatSel, launchFrom, launchTo, search, pageSize])
 
   function toggleTheme() {
     const n = !dark; setDark(n)
@@ -158,36 +286,110 @@ export default function Home() {
     setTimeout(() => setToast(''), 2200)
   }
 
-  function f$(v) { const n=+v||0; if(!n) return '—'; return n>=1000?'$'+Math.round(n).toLocaleString('ru'):'$'+n.toFixed(2) }
-  function grp(name) {
-    if (!name) return 'OTHER'
-    if (name.startsWith('SL-USA')) return 'SL-USA'
-    if (name.startsWith('GS-USA')) return 'GS-USA'
-    if (name.startsWith('MM-NZ')) return 'MM-NZ'
-    if (name.startsWith('ART_DE')) return 'ART_DE'
-    if (name.startsWith('NIK_DE')) return 'NIK_DE'
-    if (name.startsWith('SN_')) return 'SN'
-    if (name.startsWith('YUZ_')) return 'YUZ'
-    return 'OTHER'
+  function toggleArr(val, arr, setArr) {
+    setArr(arr.includes(val) ? arr.filter(x => x !== val) : [...arr, val])
   }
 
+  function resetFilters() {
+    setStatusSel([]); setGeoSel([]); setZalivSel([]); setGroupSel([])
+    setFunnelSel([]); setFormatSel('all'); setLaunchFrom(''); setLaunchTo('')
+  }
+
+  function toggleSort(key) {
+    setSort(s => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' })
+  }
+
+  function moveCol(from, to) {
+    if (from == null || from === to) return
+    const next = [...colOrder]
+    const [x] = next.splice(from, 1)
+    next.splice(to, 0, x)
+    setColOrder(next)
+    setDragIdx(null)
+  }
+
+  function resetCols() {
+    setColOrder(DEFAULT_ORDER)
+    setColVisible(defaultVisibleMap())
+  }
+
+  // Уникальные значения для мультиселектов
+  const uniq = (key) => [...new Set(accounts.map(a => a[key]).filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b)))
+  const geoOptions = uniq('geo')
+  const zalivOptions = uniq('zalivshik')
+  const funnelOptions = uniq('funnel')
+
+  const s = search.toLowerCase()
   const filtered = accounts.filter(a => {
-    if (search && !a.name?.toLowerCase().includes(search.toLowerCase()) &&
-        !a.google_ads_id?.includes(search) && !a.zalivshik?.toLowerCase().includes(search.toLowerCase())) return false
-    if (statusFilter !== 'all' && a.status !== statusFilter) return false
+    if (search && !a.name?.toLowerCase().includes(s) &&
+        !a.google_ads_id?.includes(search) && !a.zalivshik?.toLowerCase().includes(s)) return false
+    if (statusSel.length && !statusSel.includes(a.status)) return false
+    if (geoSel.length && !geoSel.includes(a.geo)) return false
+    if (zalivSel.length && !zalivSel.includes(a.zalivshik)) return false
+    if (groupSel.length && !groupSel.includes(groupOf(a.name))) return false
+    if (funnelSel.length && !funnelSel.includes(a.funnel)) return false
+    if (formatSel !== 'all' && a.format !== formatSel) return false
+    if (launchFrom && (!a.launch_date || a.launch_date < launchFrom)) return false
+    if (launchTo && (!a.launch_date || a.launch_date > launchTo)) return false
     return true
-  }).sort((a,b) => {
-    if (sortBy === 'name') return (a.name||'').localeCompare(b.name||'')
-    if (sortBy === 'status') return (a.status||'').localeCompare(b.status||'')
-    return new Date(b.created_at) - new Date(a.created_at)
+  }).sort((a, b) => {
+    const va = sortVal(sort.key, a, metricsSummary)
+    const vb = sortVal(sort.key, b, metricsSummary)
+    let r
+    if (typeof va === 'number' && typeof vb === 'number') r = va - vb
+    else r = String(va).localeCompare(String(vb))
+    return sort.dir === 'asc' ? r : -r
   })
 
+  const totalPages = pageSize === 'all' ? 1 : Math.max(1, Math.ceil(filtered.length / pageSize))
+  const curPage = Math.min(page, totalPages)
+  const pageRows = pageSize === 'all' ? filtered : filtered.slice((curPage-1)*pageSize, curPage*pageSize)
+
   const statusGroups = {}
-  STATUSES.forEach(s => { statusGroups[s] = accounts.filter(a => a.status === s).length })
+  STATUSES.forEach(st => { statusGroups[st] = accounts.filter(a => a.status === st).length })
 
   const totalAccounts = accounts.length
   const working = accounts.filter(a => a.status && a.status.toLowerCase().includes('крутит')).length
   const problems = accounts.filter(a => ['БАН','На смену','отклон','Дизапрув'].includes(a.status)).length
+
+  const activeFilterCount = statusSel.length + geoSel.length + zalivSel.length + groupSel.length +
+    funnelSel.length + (formatSel !== 'all' ? 1 : 0) + (launchFrom ? 1 : 0) + (launchTo ? 1 : 0)
+
+  const visibleCols = colOrder.map(k => COLMAP[k]).filter(c => c && colVisible[c.key])
+
+  function cellContent(key, a, mt) {
+    switch (key) {
+      case 'name': return <><div className="acc-name">{a.name||'—'}</div><div className="acc-sub">{a.google_ads_id||''}</div></>
+      case 'status': return (
+        <span className="badge" style={{background:STATUS_BG[a.status]||'rgba(107,114,128,.1)',color:STATUS_COLOR[a.status]||'#6b7280'}}>
+          <span className="badge-dot" style={{background:STATUS_COLOR[a.status]||'#6b7280'}}/>{a.status||'—'}
+        </span>
+      )
+      case 'geo': return <span className="cell-sm">{a.geo||'—'}</span>
+      case 'funnel': return <span className="cell-sm">{a.funnel||'—'}</span>
+      case 'creo': return <span className="cell-sm">{a.creo||'—'}</span>
+      case 'format': return <span className="cell-sm">{a.format||'—'}</span>
+      case 'card': return <span className="cell-sm">{a.card||'—'}</span>
+      case 'zalivshik': return <span className="cell-sm">{a.zalivshik||'—'}</span>
+      case 'launch_date': return <span className="cell-sm">{a.launch_date||'—'}</span>
+      case 'crut_date': return <span className="cell-sm">{a.crut_date||'—'}</span>
+      case 'ban_date': return <span className="cell-sm">{a.ban_date||'—'}</span>
+      case 'google_tag': return <span className="cell-sm muted">{a.google_tag||'—'}</span>
+      case 'today_cost': return <span style={{color:mt.today_cost>0?'#22d17a':'var(--t3)',fontWeight:mt.today_cost>0?500:400}}>{money(mt.today_cost)}</span>
+      case 'yest_cost': return <span style={{color:mt.yest_cost>0?'var(--t2)':'var(--t3)'}}>{money(mt.yest_cost)}</span>
+      case 'clicks': return <span style={{color:mt.clicks>0?'var(--t)':'var(--t3)'}}>{mt.clicks||'—'}</span>
+      case 'conv': return <span style={{color:mt.conv>0?'#f5a623':'var(--t3)'}}>{mt.conv||'—'}</span>
+      case 'cpa': return <span style={{color:mt.cpa>70?'#f05555':mt.cpa>0?'#22d17a':'var(--t3)'}}>{money(mt.cpa)}</span>
+      case 'dis': return a.dis_reason ? (
+        <div>
+          <div className="cell-sm" style={{color:'#f5a623'}}>{a.dis_date||''}</div>
+          <div className="cell-sm muted" style={{maxWidth:150,overflow:'hidden',textOverflow:'ellipsis'}}>{a.dis_reason}</div>
+        </div>
+      ) : <span className="cell-sm muted">—</span>
+      case 'comment': return <span className="cell-sm muted">{a.comment||'—'}</span>
+      default: return null
+    }
+  }
 
   return (
     <>
@@ -216,8 +418,10 @@ export default function Home() {
         .tb-acts{display:flex;gap:5px;align-items:center}
         .btn{display:inline-flex;align-items:center;gap:4px;background:var(--s2);border:1px solid var(--bd);border-radius:4px;padding:4px 10px;font-size:11px;color:var(--t2);cursor:pointer;font-family:'Inter',sans-serif;white-space:nowrap;outline:none;transition:all .1s}
         .btn:hover{background:var(--s3);color:var(--t)}
+        .btn.act{background:rgba(91,110,245,.12);border-color:rgba(91,110,245,.3);color:var(--acc)}
         .btn-acc{background:var(--acc2);border-color:var(--acc);color:#fff;font-weight:500}
         .btn-acc:hover{background:var(--acc);color:#fff}
+        .badge-cnt{background:var(--acc);color:#fff;border-radius:8px;font-size:9px;padding:0 5px;margin-left:2px}
         .body{display:flex;flex:1;overflow:hidden}
         .sidebar{width:180px;background:var(--s1);border-right:1px solid var(--bd);overflow-y:auto;flex-shrink:0}
         .sb-sec{padding:8px 0 4px}
@@ -229,12 +433,22 @@ export default function Home() {
         .sb-cnt{margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10px;background:var(--s3);padding:1px 5px;border-radius:8px;color:var(--t3)}
         .sbi.act .sb-cnt{color:var(--acc);background:rgba(91,110,245,.15)}
         .main{flex:1;overflow:hidden;display:flex;flex-direction:column}
-        .toolbar{display:flex;align-items:center;gap:6px;padding:7px 14px;border-bottom:1px solid var(--bd);flex-shrink:0;background:var(--s1)}
+        .toolbar{display:flex;align-items:center;gap:6px;padding:7px 14px;border-bottom:1px solid var(--bd);flex-shrink:0;background:var(--s1);flex-wrap:wrap}
         .ssel{background:var(--s2);border:1px solid var(--bd);border-radius:4px;padding:3px 7px;font-size:11px;color:var(--t2);outline:none;cursor:pointer;font-family:'Inter',sans-serif}
+        .filters-panel{padding:10px 14px;border-bottom:1px solid var(--bd);background:var(--s1);display:flex;flex-direction:column;gap:8px;flex-shrink:0;max-height:42vh;overflow-y:auto}
+        .fp-row{display:flex;align-items:flex-start;gap:8px}
+        .fp-lbl{font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.05em;width:80px;flex-shrink:0;padding-top:4px}
+        .chips{display:flex;flex-wrap:wrap;gap:4px}
+        .chip{font-size:11px;padding:2px 9px;border-radius:11px;border:1px solid var(--bd);background:var(--s2);color:var(--t2);cursor:pointer;user-select:none;transition:all .1s}
+        .chip:hover{border-color:var(--bd2);color:var(--t)}
+        .chip.act{background:rgba(91,110,245,.15);border-color:var(--acc);color:var(--acc)}
+        .date-inp{background:var(--s2);border:1px solid var(--bd);border-radius:4px;padding:3px 6px;font-size:11px;color:var(--t);outline:none;font-family:'Inter',sans-serif}
         .tbl-wrap{flex:1;overflow:auto}
         table{width:100%;border-collapse:collapse;font-size:12px}
-        thead th{position:sticky;top:0;background:var(--s2);padding:7px 9px;text-align:left;font-size:10px;color:var(--t3);font-weight:500;letter-spacing:.05em;text-transform:uppercase;border-bottom:1px solid var(--bd);white-space:nowrap;z-index:10}
+        thead th{position:sticky;top:0;background:var(--s2);padding:7px 9px;text-align:left;font-size:10px;color:var(--t3);font-weight:500;letter-spacing:.05em;text-transform:uppercase;border-bottom:1px solid var(--bd);white-space:nowrap;z-index:10;cursor:pointer;user-select:none}
+        thead th:hover{color:var(--t)}
         thead th.r{text-align:right}
+        thead th .arr{color:var(--acc);margin-left:3px}
         tbody tr{border-bottom:1px solid var(--bd);cursor:pointer;transition:background .07s}
         tbody tr:hover td{background:var(--s2)}
         td{padding:6px 9px;vertical-align:middle;white-space:nowrap}
@@ -243,9 +457,21 @@ export default function Home() {
         .acc-sub{font-size:10px;color:var(--t3);margin-top:1px}
         .badge{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:3px;font-size:10px;font-weight:500;font-family:'JetBrains Mono',monospace;cursor:pointer;white-space:nowrap}
         .badge-dot{width:5px;height:5px;border-radius:50%;flex-shrink:0}
-        .cell-sm{font-size:11px;color:var(--t2);max-width:120px;overflow:hidden;text-overflow:ellipsis}
+        .cell-sm{font-size:11px;color:var(--t2);max-width:120px;overflow:hidden;text-overflow:ellipsis;display:inline-block}
         .cell-sm.muted{color:var(--t3)}
         .frozen-row td{opacity:.6}
+        .pager{display:flex;align-items:center;gap:6px;margin-left:auto;font-size:11px;color:var(--t3)}
+        .pager button{background:var(--s2);border:1px solid var(--bd);border-radius:4px;padding:2px 8px;color:var(--t2);cursor:pointer;font-size:11px}
+        .pager button:disabled{opacity:.4;cursor:default}
+        .panel-overlay{position:fixed;inset:0;z-index:410}
+        .cols-panel{position:absolute;top:42px;right:14px;width:230px;background:var(--s1);border:1px solid var(--bd2);border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,.4);z-index:420;padding:8px;max-height:70vh;overflow-y:auto}
+        .cp-head{display:flex;align-items:center;justify-content:space-between;font-size:11px;color:var(--t3);text-transform:uppercase;letter-spacing:.05em;padding:4px 6px 8px}
+        .cp-reset{font-size:10px;color:var(--acc);cursor:pointer;background:none;border:none}
+        .col-item{display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:4px;cursor:grab;font-size:12px;color:var(--t2)}
+        .col-item:hover{background:var(--s2)}
+        .col-item.drag{opacity:.4}
+        .col-item label{display:flex;align-items:center;gap:6px;cursor:pointer;flex:1}
+        .drag-handle{color:var(--t3);font-size:11px;cursor:grab}
         .dbg{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;display:none}
         .dbg.open{display:block}
         .drawer{position:fixed;top:0;right:-600px;width:600px;height:100vh;background:var(--s1);border-left:1px solid var(--bd);z-index:201;display:flex;flex-direction:column;transition:right .2s cubic-bezier(.4,0,.2,1);overflow:hidden}
@@ -288,13 +514,11 @@ export default function Home() {
         .modal{background:var(--s1);border:1px solid var(--bd);border-radius:8px;width:640px;max-height:90vh;overflow-y:auto;padding:24px;position:relative}
         .modal h2{font-size:15px;font-weight:600;color:var(--t);margin-bottom:16px}
         .modal-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-        .modal-grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
         .modal-acts{display:flex;gap:8px;justify-content:flex-end;margin-top:16px;padding-top:12px;border-top:1px solid var(--bd)}
         .status-popup{position:fixed;background:var(--s2);border:1px solid var(--bd2);border-radius:6px;padding:5px;z-index:400;min-width:170px;box-shadow:0 8px 24px rgba(0,0,0,.5);max-height:60vh;overflow-y:auto}
         .sp-item{display:flex;align-items:center;gap:7px;padding:5px 10px;font-size:12px;color:var(--t2);cursor:pointer;border-radius:3px}
         .sp-item:hover{background:var(--s3);color:var(--t)}
         .overlay{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:500;gap:14px}
-        .overlay.hidden{display:none}
         .spin{width:36px;height:36px;border:3px solid var(--bd2);border-top-color:var(--acc);border-radius:50%;animation:spin .8s linear infinite}
         @keyframes spin{to{transform:rotate(360deg)}}
         .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--s3);border:1px solid var(--bd2);border-radius:5px;padding:8px 16px;font-size:12px;color:var(--t);opacity:0;transition:all .2s;z-index:600;pointer-events:none;white-space:nowrap}
@@ -343,99 +567,182 @@ export default function Home() {
           <div className="sidebar">
             <div className="sb-sec">
               <div className="sb-lbl">Статус</div>
-              <div className={`sbi${statusFilter==='all'?' act':''}`} onClick={()=>setStatusFilter('all')}>
+              <div className={`sbi${statusSel.length===0?' act':''}`} onClick={()=>setStatusSel([])}>
                 <span className="sb-dot" style={{background:'var(--t3)'}}/>Все<span className="sb-cnt">{totalAccounts}</span>
               </div>
-              {STATUSES.filter(s=>statusGroups[s]>0).map(s=>(
-                <div key={s} className={`sbi${statusFilter===s?' act':''}`} onClick={()=>setStatusFilter(s)}>
-                  <span className="sb-dot" style={{background:STATUS_COLOR[s]||'#6b7280'}}/>
-                  {s}<span className="sb-cnt">{statusGroups[s]}</span>
+              {STATUSES.filter(st=>statusGroups[st]>0).map(st=>(
+                <div key={st} className={`sbi${statusSel.includes(st)?' act':''}`} onClick={()=>toggleArr(st,statusSel,setStatusSel)}>
+                  <span className="sb-dot" style={{background:STATUS_COLOR[st]||'#6b7280'}}/>
+                  {st}<span className="sb-cnt">{statusGroups[st]}</span>
                 </div>
               ))}
             </div>
           </div>
 
           {/* MAIN */}
-          <div className="main">
+          <div className="main" style={{position:'relative'}}>
             <div className="toolbar">
-              <span style={{fontSize:11,color:'var(--t3)'}}>{filtered.length} акк.</span>
-              <select className="ssel" value={sortBy} onChange={e=>setSortBy(e.target.value)} style={{marginLeft:8}}>
-                <option value="created_at">По дате добавления</option>
-                <option value="name">По названию</option>
-                <option value="status">По статусу</option>
-              </select>
+              <button className={`btn${showFilters?' act':''}`} onClick={()=>setShowFilters(v=>!v)}>
+                ⚲ Фильтры{activeFilterCount>0 && <span className="badge-cnt">{activeFilterCount}</span>}
+              </button>
+              <button className="btn" onClick={()=>setShowCols(true)}>⚙️ Колонки</button>
+              <span style={{fontSize:11,color:'var(--t3)',marginLeft:6}}>{filtered.length} акк.</span>
+              <div className="pager">
+                <span>На странице:</span>
+                <select className="ssel" value={pageSize} onChange={e=>setPageSize(e.target.value==='all'?'all':+e.target.value)}>
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                  <option value="all">Все</option>
+                </select>
+                {pageSize!=='all' && (
+                  <>
+                    <button disabled={curPage<=1} onClick={()=>setPage(curPage-1)}>← Назад</button>
+                    <span>Стр. {curPage} из {totalPages}</span>
+                    <button disabled={curPage>=totalPages} onClick={()=>setPage(curPage+1)}>Вперёд →</button>
+                  </>
+                )}
+              </div>
             </div>
+
+            {/* FILTERS PANEL */}
+            {showFilters && (
+              <div className="filters-panel">
+                <div className="fp-row">
+                  <span className="fp-lbl">Статус</span>
+                  <div className="chips">
+                    {STATUSES.map(st=>(
+                      <span key={st} className={`chip${statusSel.includes(st)?' act':''}`} onClick={()=>toggleArr(st,statusSel,setStatusSel)}>{st}</span>
+                    ))}
+                  </div>
+                </div>
+                {geoOptions.length>0 && (
+                  <div className="fp-row">
+                    <span className="fp-lbl">Гео</span>
+                    <div className="chips">
+                      {geoOptions.map(g=>(
+                        <span key={g} className={`chip${geoSel.includes(g)?' act':''}`} onClick={()=>toggleArr(g,geoSel,setGeoSel)}>{g}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {zalivOptions.length>0 && (
+                  <div className="fp-row">
+                    <span className="fp-lbl">Заливщик</span>
+                    <div className="chips">
+                      {zalivOptions.map(z=>(
+                        <span key={z} className={`chip${zalivSel.includes(z)?' act':''}`} onClick={()=>toggleArr(z,zalivSel,setZalivSel)}>{z}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div className="fp-row">
+                  <span className="fp-lbl">Группа</span>
+                  <div className="chips">
+                    {GROUPS.map(g=>(
+                      <span key={g} className={`chip${groupSel.includes(g)?' act':''}`} onClick={()=>toggleArr(g,groupSel,setGroupSel)}>{g}</span>
+                    ))}
+                  </div>
+                </div>
+                {funnelOptions.length>0 && (
+                  <div className="fp-row">
+                    <span className="fp-lbl">Воронка</span>
+                    <div className="chips">
+                      {funnelOptions.map(f=>(
+                        <span key={f} className={`chip${funnelSel.includes(f)?' act':''}`} onClick={()=>toggleArr(f,funnelSel,setFunnelSel)}>{f}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div className="fp-row">
+                  <span className="fp-lbl">Формат</span>
+                  <div className="chips">
+                    {[{k:'all',l:'Все'},{k:'Фото',l:'Фото'},{k:'Видео',l:'Видео'}].map(f=>(
+                      <span key={f.k} className={`chip${formatSel===f.k?' act':''}`} onClick={()=>setFormatSel(f.k)}>{f.l}</span>
+                    ))}
+                  </div>
+                </div>
+                <div className="fp-row">
+                  <span className="fp-lbl">Дата пуска</span>
+                  <div className="chips" style={{alignItems:'center'}}>
+                    <input type="date" className="date-inp" value={launchFrom} onChange={e=>setLaunchFrom(e.target.value)}/>
+                    <span style={{color:'var(--t3)',fontSize:11}}>—</span>
+                    <input type="date" className="date-inp" value={launchTo} onChange={e=>setLaunchTo(e.target.value)}/>
+                  </div>
+                </div>
+                <div className="fp-row">
+                  <span className="fp-lbl"></span>
+                  <button className="btn" onClick={resetFilters}>✕ Сбросить всё</button>
+                </div>
+              </div>
+            )}
 
             <div className="tbl-wrap">
               {filtered.length === 0 && !loading ? (
                 <div style={{padding:'60px',textAlign:'center',color:'var(--t3)',lineHeight:2}}>
-                  <div style={{fontSize:14,color:'var(--t)',marginBottom:8}}>Аккаунтов нет</div>
-                  <div>Нажми <b style={{color:'var(--acc)'}}>+ Аккаунт</b> чтобы добавить первый</div>
+                  <div style={{fontSize:14,color:'var(--t)',marginBottom:8}}>Ничего не найдено</div>
+                  <div>Измени фильтры или нажми <b style={{color:'var(--acc)'}}>+ Аккаунт</b></div>
                 </div>
               ) : (
                 <table>
                   <thead><tr>
-                    <th style={{width:150}}>Аккаунт</th>
-                    <th style={{width:130}}>Статус</th>
-                    <th style={{width:80}}>Гео</th>
-                    <th style={{width:80}}>Воронка</th>
-                    <th style={{width:100}}>Крео</th>
-                    <th style={{width:75}} className="r">Сегодня $</th>
-                    <th style={{width:75}} className="r">Вчера $</th>
-                    <th style={{width:55}} className="r">Кл. сег.</th>
-                    <th style={{width:55}} className="r">Конв.</th>
-                    <th style={{width:70}} className="r">CPA $</th>
-                    <th style={{width:80}}>Карта</th>
-                    <th style={{width:80}}>Заливщик</th>
-                    <th style={{width:160}}>Дизапрув</th>
-                    <th style={{width:120}}>Комментарий</th>
+                    {visibleCols.map(c=>(
+                      <th key={c.key} style={{width:c.width}} className={c.align==='r'?'r':undefined} onClick={()=>toggleSort(c.key)}>
+                        {c.label}
+                        {sort.key===c.key && <span className="arr">{sort.dir==='asc'?'↑':'↓'}</span>}
+                      </th>
+                    ))}
                   </tr></thead>
                   <tbody>
-                    {filtered.map(a => {
-                      const m = metricsSummary[a.id] || {}
-                      const todayCost = m.today?.cost_usd || 0
-                      const yesterCost = m.yesterday?.cost_usd || 0
-                      const todayClicks = m.today?.clicks || 0
-                      const todayConv = m.today?.conversions || 0
-                      const todayCpa = m.today?.cpa || 0
-                      const f$ = v => v > 0 ? (v >= 1000 ? '$'+Math.round(v).toLocaleString('ru') : '$'+v.toFixed(0)) : '—'
+                    {pageRows.map(a => {
+                      const mt = metricsOf(a, metricsSummary)
                       return (
-                      <tr key={a.id} className={a.is_frozen?'frozen-row':''} onClick={()=>openDrawer(a)}>
-                        <td>
-                          <div className="acc-name">{a.name||'—'}</div>
-                          <div className="acc-sub">{a.google_ads_id||''}</div>
-                        </td>
-                        <td onClick={e=>{e.stopPropagation();setStatusPopup({id:a.id,x:e.clientX,y:e.clientY})}}>
-                          <span className="badge" style={{background:STATUS_BG[a.status]||'rgba(107,114,128,.1)',color:STATUS_COLOR[a.status]||'#6b7280'}}>
-                            <span className="badge-dot" style={{background:STATUS_COLOR[a.status]||'#6b7280'}}/>
-                            {a.status||'—'}
-                          </span>
-                        </td>
-                        <td><span className="cell-sm">{a.geo||'—'}</span></td>
-                        <td><span className="cell-sm">{a.funnel||'—'}</span></td>
-                        <td><span className="cell-sm">{a.creo||'—'}</span></td>
-                        <td className="r" style={{color:todayCost>0?'#22d17a':'var(--t3)',fontWeight:todayCost>0?500:400}}>{f$(todayCost)}</td>
-                        <td className="r" style={{color:yesterCost>0?'var(--t2)':'var(--t3)'}}>{f$(yesterCost)}</td>
-                        <td className="r" style={{color:todayClicks>0?'var(--t)':'var(--t3)'}}>{todayClicks||'—'}</td>
-                        <td className="r" style={{color:todayConv>0?'#f5a623':'var(--t3)'}}>{todayConv||'—'}</td>
-                        <td className="r" style={{color:todayCpa>70?'#f05555':todayCpa>0?'#22d17a':'var(--t3)'}}>{f$(todayCpa)}</td>
-                        <td><span className="cell-sm">{a.card||'—'}</span></td>
-                        <td><span className="cell-sm">{a.zalivshik||'—'}</span></td>
-                        <td>
-                          {a.dis_reason ? (
-                            <div>
-                              <div className="cell-sm" style={{color:'#f5a623'}}>{a.dis_date||''}</div>
-                              <div className="cell-sm muted" style={{maxWidth:150,overflow:'hidden',textOverflow:'ellipsis'}}>{a.dis_reason}</div>
-                            </div>
-                          ) : <span className="cell-sm muted">—</span>}
-                        </td>
-                        <td><span className="cell-sm muted">{a.comment||'—'}</span></td>
-                      </tr>
-                    )})}
+                        <tr key={a.id} className={a.is_frozen?'frozen-row':''} onClick={()=>openDrawer(a)}>
+                          {visibleCols.map(c=>{
+                            const isStatus = c.key==='status'
+                            return (
+                              <td key={c.key} className={c.align==='r'?'r':undefined}
+                                  onClick={isStatus ? (e=>{e.stopPropagation();setStatusPopup({id:a.id,x:e.clientX,y:e.clientY})}) : undefined}>
+                                {cellContent(c.key, a, mt)}
+                              </td>
+                            )
+                          })}
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               )}
             </div>
+
+            {/* COLUMNS PANEL */}
+            {showCols && (
+              <>
+                <div className="panel-overlay" onClick={()=>setShowCols(false)}/>
+                <div className="cols-panel">
+                  <div className="cp-head">
+                    <span>Колонки</span>
+                    <button className="cp-reset" onClick={resetCols}>Сбросить</button>
+                  </div>
+                  {colOrder.map((k,i)=>{
+                    const c = COLMAP[k]; if(!c) return null
+                    return (
+                      <div key={k} className={`col-item${dragIdx===i?' drag':''}`}
+                           draggable
+                           onDragStart={()=>setDragIdx(i)}
+                           onDragOver={e=>e.preventDefault()}
+                           onDrop={()=>moveCol(dragIdx,i)}>
+                        <span className="drag-handle">⋮⋮</span>
+                        <label>
+                          <input type="checkbox" checked={!!colVisible[k]} onChange={()=>setColVisible({...colVisible,[k]:!colVisible[k]})}/>
+                          {c.label}
+                        </label>
+                      </div>
+                    )
+                  })}
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -444,10 +751,10 @@ export default function Home() {
       {statusPopup && (
         <div style={{position:'fixed',inset:0,zIndex:399}} onClick={()=>setStatusPopup(null)}>
           <div className="status-popup" style={{left:Math.min(statusPopup.x,window.innerWidth-190),top:Math.min(statusPopup.y+4,window.innerHeight-300)}}>
-            {STATUSES.map(s=>(
-              <div key={s} className="sp-item" onClick={e=>{e.stopPropagation();quickStatus(statusPopup.id,s)}}>
-                <span style={{width:7,height:7,borderRadius:'50%',background:STATUS_COLOR[s]||'#6b7280',display:'inline-block',flexShrink:0}}/>
-                {s}
+            {STATUSES.map(st=>(
+              <div key={st} className="sp-item" onClick={e=>{e.stopPropagation();quickStatus(statusPopup.id,st)}}>
+                <span style={{width:7,height:7,borderRadius:'50%',background:STATUS_COLOR[st]||'#6b7280',display:'inline-block',flexShrink:0}}/>
+                {st}
               </div>
             ))}
           </div>
