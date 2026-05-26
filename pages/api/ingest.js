@@ -1,13 +1,16 @@
 import { supabaseAdmin } from '../../lib/supabase'
-
-const API_KEY = 'c4194b8cb195929b2a8a1284d65b4347ddded7171af69efd6a51d204eb03f98a'
-const USER_ID = '6c5ac05d-b307-46dc-a162-00a09a1e020a'
+import { getUserIdByApiKey } from '../../lib/auth'
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
 
   const key = req.headers['x-api-key'] || req.body?.api_key
-  if (key !== API_KEY) return res.status(401).json({ error: 'Unauthorized' })
+  const user = await getUserIdByApiKey(key)
+  if (!user) return res.status(401).json({ error: 'Invalid API key' })
+  if (user.plan === 'trial' && user.trial_ends_at && new Date(user.trial_ends_at) < new Date()) {
+    return res.status(403).json({ error: 'Trial expired' })
+  }
+  const USER_ID = user.id
 
   const { batch } = req.body
   if (!batch || !Array.isArray(batch)) {
