@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import Head from 'next/head'
+import Link from 'next/link'
 
 const API_KEY = 'c4194b8cb195929b2a8a1284d65b4347ddded7171af69efd6a51d204eb03f98a'
 
@@ -306,6 +307,9 @@ export default function Home() {
         {/* TOPBAR */}
         <div className="topbar">
           <div className="logo">Залив<em>CRM</em><span className="live">● live</span></div>
+          <div className="sep"/>
+          <Link href="/" style={{fontSize:12,color:'var(--acc)',fontWeight:500,textDecoration:'none',padding:'4px 10px',background:'rgba(91,110,245,.1)',borderRadius:4}}>Аккаунты</Link>
+          <Link href="/stats" style={{fontSize:12,color:'var(--t3)',textDecoration:'none',padding:'4px 10px',borderRadius:4}}>📊 Статистика</Link>
           <div className="sep"/>
           <div className="srch">
             <span className="srch-ic">⌕</span>
