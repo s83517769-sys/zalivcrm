@@ -189,6 +189,8 @@ export default function Home() {
   const [colVisible, setColVisible] = useState(defaultVisibleMap())
   const [showCols, setShowCols] = useState(false)
   const [dragIdx, setDragIdx] = useState(null)
+  const [thDrag, setThDrag] = useState(null)
+  const [thOver, setThOver] = useState(null) // { key, side: 'left'|'right' }
 
   // ── Сортировка / страницы ──
   const [sort, setSort] = useState({ key:'created_at', dir:'desc' })
@@ -389,6 +391,20 @@ export default function Home() {
     setColVisible(defaultVisibleMap())
   }
 
+  // Перетаскивание колонок за заголовок таблицы
+  function dropTh(toKey) {
+    const fromKey = thDrag
+    const side = thOver?.side || 'left'
+    setThDrag(null); setThOver(null)
+    if (!fromKey || fromKey === toKey) return
+    const next = colOrder.filter(k => k !== fromKey)
+    let toI = next.indexOf(toKey)
+    if (toI < 0) return
+    if (side === 'right') toI += 1
+    next.splice(toI, 0, fromKey)
+    setColOrder(next)
+  }
+
   // Уникальные значения для мультиселектов
   const uniq = (key) => [...new Set(accounts.map(a => a[key]).filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b)))
   const geoOptions = uniq('geo')
@@ -559,8 +575,9 @@ export default function Home() {
         .date-inp{background:var(--s2);border:1px solid var(--bd);border-radius:4px;padding:3px 6px;font-size:11px;color:var(--t);outline:none;font-family:'Inter',sans-serif}
         .tbl-wrap{flex:1;overflow:auto}
         table{width:100%;border-collapse:collapse;font-size:12px}
-        thead th{position:sticky;top:0;background:var(--s2);padding:7px 9px;text-align:left;font-size:10px;color:var(--t3);font-weight:500;letter-spacing:.05em;text-transform:uppercase;border-bottom:1px solid var(--bd);white-space:nowrap;z-index:10;cursor:pointer;user-select:none}
+        thead th{position:sticky;top:0;background:var(--s2);padding:7px 9px;text-align:left;font-size:10px;color:var(--t3);font-weight:500;letter-spacing:.05em;text-transform:uppercase;border-bottom:1px solid var(--bd);white-space:nowrap;z-index:10;cursor:grab;user-select:none}
         thead th:hover{color:var(--t)}
+        thead th:active{cursor:grabbing}
         thead th.r{text-align:right}
         thead th .arr{color:var(--acc);margin-left:3px}
         tbody tr{border-bottom:1px solid var(--bd);cursor:pointer;transition:background .07s}
@@ -806,12 +823,26 @@ export default function Home() {
               ) : (
                 <table>
                   <thead><tr>
-                    {visibleCols.map(c=>(
-                      <th key={c.key} style={{width:c.width}} className={c.align==='r'?'r':undefined} onClick={()=>toggleSort(c.key)}>
-                        {c.label}
-                        {sort.key===c.key && <span className="arr">{sort.dir==='asc'?'↑':'↓'}</span>}
-                      </th>
-                    ))}
+                    {visibleCols.map(c=>{
+                      const over = thOver && thOver.key===c.key
+                      const thStyle = {
+                        width:c.width,
+                        opacity: thDrag===c.key ? 0.5 : 1,
+                        boxShadow: over ? (thOver.side==='left' ? 'inset 2px 0 0 var(--acc)' : 'inset -2px 0 0 var(--acc)') : undefined,
+                      }
+                      return (
+                        <th key={c.key} style={thStyle} className={c.align==='r'?'r':undefined}
+                            draggable
+                            onClick={()=>toggleSort(c.key)}
+                            onDragStart={()=>setThDrag(c.key)}
+                            onDragEnd={()=>{setThDrag(null);setThOver(null)}}
+                            onDragOver={e=>{e.preventDefault();const r=e.currentTarget.getBoundingClientRect();const side=(e.clientX-r.left)<r.width/2?'left':'right';if(!thOver||thOver.key!==c.key||thOver.side!==side)setThOver({key:c.key,side})}}
+                            onDrop={e=>{e.preventDefault();dropTh(c.key)}}>
+                          {c.label}
+                          {sort.key===c.key && <span className="arr">{sort.dir==='asc'?'↑':'↓'}</span>}
+                        </th>
+                      )
+                    })}
                   </tr></thead>
                   <tbody>
                     {pageRows.map(a => {
