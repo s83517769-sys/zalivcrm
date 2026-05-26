@@ -199,6 +199,7 @@ export default function Stats() {
         <Link href="/" className="nav-link">← Аккаунты</Link>
         <Link href="/stats" className="nav-link act">📊 Статистика</Link>
         <Link href="/proxy" className="nav-link">🌐 Прокси</Link>
+        <Link href="/urls" className="nav-link">🔗 URL / CLO</Link>
         <div style={{marginLeft:'auto',display:'flex',gap:5}}>
           <button className={`btn${view==='status'?' act':''}`} onClick={()=>setView('status')}>По статусам</button>
           <button className={`btn${view==='cost'?' act':''}`} onClick={()=>setView('cost')}>По метрикам</button>
