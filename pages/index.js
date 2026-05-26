@@ -67,6 +67,7 @@ export default function Home() {
   const [toast, setToast] = useState('')
   const [syncTime, setSyncTime] = useState('')
   const [statusPopup, setStatusPopup] = useState(null)
+  const [metricsSummary, setMetricsSummary] = useState({})
   const popupRef = useRef(null)
 
   useEffect(() => {
@@ -86,8 +87,12 @@ export default function Home() {
 
   async function load() {
     setLoading(true)
-    const data = await api('/api/accounts')
+    const [data, mData] = await Promise.all([
+      api('/api/accounts'),
+      api('/api/metrics-summary')
+    ])
     setAccounts(data.accounts || [])
+    setMetricsSummary(mData.summary || {})
     setLoading(false)
     const now = new Date()
     setSyncTime(now.getHours().toString().padStart(2,'0')+':'+now.getMinutes().toString().padStart(2,'0'))
@@ -374,15 +379,26 @@ export default function Home() {
                     <th style={{width:80}}>Гео</th>
                     <th style={{width:80}}>Воронка</th>
                     <th style={{width:100}}>Крео</th>
+                    <th style={{width:75}} className="r">Сегодня $</th>
+                    <th style={{width:75}} className="r">Вчера $</th>
+                    <th style={{width:55}} className="r">Кл. сег.</th>
+                    <th style={{width:55}} className="r">Конв.</th>
+                    <th style={{width:70}} className="r">CPA $</th>
                     <th style={{width:80}}>Карта</th>
-                    <th style={{width:120}}>Дата пуска</th>
-                    <th style={{width:120}}>Дата крута</th>
                     <th style={{width:80}}>Заливщик</th>
                     <th style={{width:160}}>Дизапрув</th>
                     <th style={{width:120}}>Комментарий</th>
                   </tr></thead>
                   <tbody>
-                    {filtered.map(a => (
+                    {filtered.map(a => {
+                      const m = metricsSummary[a.id] || {}
+                      const todayCost = m.today?.cost_usd || 0
+                      const yesterCost = m.yesterday?.cost_usd || 0
+                      const todayClicks = m.today?.clicks || 0
+                      const todayConv = m.today?.conversions || 0
+                      const todayCpa = m.today?.cpa || 0
+                      const f$ = v => v > 0 ? (v >= 1000 ? '$'+Math.round(v).toLocaleString('ru') : '$'+v.toFixed(0)) : '—'
+                      return (
                       <tr key={a.id} className={a.is_frozen?'frozen-row':''} onClick={()=>openDrawer(a)}>
                         <td>
                           <div className="acc-name">{a.name||'—'}</div>
@@ -397,9 +413,12 @@ export default function Home() {
                         <td><span className="cell-sm">{a.geo||'—'}</span></td>
                         <td><span className="cell-sm">{a.funnel||'—'}</span></td>
                         <td><span className="cell-sm">{a.creo||'—'}</span></td>
+                        <td className="r" style={{color:todayCost>0?'#22d17a':'var(--t3)',fontWeight:todayCost>0?500:400}}>{f$(todayCost)}</td>
+                        <td className="r" style={{color:yesterCost>0?'var(--t2)':'var(--t3)'}}>{f$(yesterCost)}</td>
+                        <td className="r" style={{color:todayClicks>0?'var(--t)':'var(--t3)'}}>{todayClicks||'—'}</td>
+                        <td className="r" style={{color:todayConv>0?'#f5a623':'var(--t3)'}}>{todayConv||'—'}</td>
+                        <td className="r" style={{color:todayCpa>70?'#f05555':todayCpa>0?'#22d17a':'var(--t3)'}}>{f$(todayCpa)}</td>
                         <td><span className="cell-sm">{a.card||'—'}</span></td>
-                        <td><span className="cell-sm">{a.launch_date||'—'}</span></td>
-                        <td><span className="cell-sm">{a.crut_date||'—'}</span></td>
                         <td><span className="cell-sm">{a.zalivshik||'—'}</span></td>
                         <td>
                           {a.dis_reason ? (
@@ -411,7 +430,7 @@ export default function Home() {
                         </td>
                         <td><span className="cell-sm muted">{a.comment||'—'}</span></td>
                       </tr>
-                    ))}
+                    )})}
                   </tbody>
                 </table>
               )}
