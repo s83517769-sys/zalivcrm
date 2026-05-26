@@ -118,6 +118,7 @@ export default function Proxy() {
         <Link href="/" className="nav-link">Аккаунты</Link>
         <Link href="/stats" className="nav-link">📊 Статистика</Link>
         <Link href="/proxy" className="nav-link act">🌐 Прокси</Link>
+        <Link href="/urls" className="nav-link">🔗 URL / CLO</Link>
         <div style={{marginLeft:'auto'}}>
           <button className="btn" onClick={()=>{const n=dark?'light':'dark';setDark(n==='dark');localStorage.setItem('zcrm_theme',n)}}>{dark?'☀️':'🌙'}</button>
         </div>
