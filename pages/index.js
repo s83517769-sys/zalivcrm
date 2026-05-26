@@ -46,6 +46,7 @@ function groupOf(name) {
 const ALL_COLUMNS = [
   { key:'name',       label:'Аккаунт',    width:150, align:'l' },
   { key:'status',     label:'Статус',     width:130, align:'l' },
+  { key:'tech_status',label:'Тех. статус',width:110, align:'l' },
   { key:'geo',        label:'Гео',        width:80,  align:'l' },
   { key:'funnel',     label:'Воронка',    width:80,  align:'l' },
   { key:'creo',       label:'Крео',       width:100, align:'l' },
@@ -67,11 +68,27 @@ const ALL_COLUMNS = [
 const COLMAP = Object.fromEntries(ALL_COLUMNS.map(c => [c.key, c]))
 const ALL_KEYS = ALL_COLUMNS.map(c => c.key)
 const DEFAULT_ORDER = [
-  'name','status','geo','funnel','creo','today_cost','yest_cost','clicks','conv','cpa',
+  'name','status','tech_status','geo','funnel','creo','today_cost','yest_cost','clicks','conv','cpa',
   'card','zalivshik','format','launch_date','crut_date','ban_date','dis','comment','google_tag'
 ]
-const DEFAULT_VISIBLE = ['name','status','geo','funnel','creo','today_cost','yest_cost','clicks','conv','cpa','card','zalivshik','dis','comment']
+const DEFAULT_VISIBLE = ['name','status','tech_status','geo','funnel','creo','today_cost','yest_cost','clicks','conv','cpa','card','zalivshik','dis','comment']
 const defaultVisibleMap = () => Object.fromEntries(ALL_KEYS.map(k => [k, DEFAULT_VISIBLE.includes(k)]))
+
+// Поля для расширенного поиска
+const SEARCH_FIELDS = [
+  { key:'name',       label:'название',           get:a=>a.name },
+  { key:'google_ads_id', label:'Google Ads ID',   get:a=>a.google_ads_id },
+  { key:'card',       label:'карта',              get:a=>a.card },
+  { key:'geo',        label:'гео',                get:a=>a.geo },
+  { key:'zalivshik',  label:'заливщик',           get:a=>a.zalivshik },
+  { key:'link',       label:'White ссылка',       get:a=>a.link },
+  { key:'black',      label:'Black UTM',          get:a=>a.black },
+  { key:'google_tag', label:'Google Tag',         get:a=>a.google_tag },
+  { key:'clo_url',    label:'CLO',                get:a=>a.clo_url },
+  { key:'comment',    label:'комментарий',        get:a=>a.comment },
+  { key:'dis_reason', label:'причина дизапрува',  get:a=>a.dis_reason },
+]
+function matchField(a, f, s) { const v = f.get(a); return v && String(v).toLowerCase().includes(s) }
 
 const EMPTY_FORM = {
   name:'', google_ads_id:'', currency:'USD', status:'Пуск', zalivshik:'',
@@ -113,6 +130,7 @@ function sortVal(key, a, summary) {
     case 'cpa': return mt.cpa
     case 'name': return a.name || ''
     case 'status': return a.status || ''
+    case 'tech_status': return a.tech_status || ''
     case 'geo': return a.geo || ''
     case 'funnel': return a.funnel || ''
     case 'creo': return a.creo || ''
@@ -146,6 +164,14 @@ export default function Home() {
   const [syncTime, setSyncTime] = useState('')
   const [statusPopup, setStatusPopup] = useState(null)
   const [metricsSummary, setMetricsSummary] = useState({})
+  const [copyPopup, setCopyPopup] = useState(null)
+
+  // ── Массовое добавление ──
+  const [showBulk, setShowBulk] = useState(false)
+  const [bulkText, setBulkText] = useState('')
+  const [bulkRows, setBulkRows] = useState([])
+  const [bulkAll, setBulkAll] = useState({ geo:'', zalivshik:'', funnel:'' })
+  const [bulkSaving, setBulkSaving] = useState(false)
 
   // ── Фильтры ──
   const [statusSel, setStatusSel] = useState([])
@@ -286,6 +312,56 @@ export default function Home() {
     setTimeout(() => setToast(''), 2200)
   }
 
+  function copyText(text, label) {
+    const t = text || ''
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(t)
+    setCopyPopup(null)
+    showToast(t ? 'Скопировано: ' + label : 'Пусто: ' + label)
+  }
+
+  function copyAll(a) {
+    const block = [
+      `Название: ${a.name||''}`,
+      `Google Ads ID: ${a.google_ads_id||''}`,
+      `White: ${a.link||''}`,
+      `Black UTM: ${a.black||''}`,
+      `Google Tag: ${a.google_tag||''}`,
+      `CLO: ${a.clo_url||''}`,
+    ].join('\n')
+    copyText(block, 'всё')
+  }
+
+  // ── Массовое добавление ──
+  function bulkParse() {
+    const lines = bulkText.split('\n').map(l => l.trim()).filter(Boolean)
+    setBulkRows(lines.map(name => ({ name, status:'Пуск', geo:'', zalivshik:'', funnel:'' })))
+  }
+  function bulkApplyAll() {
+    setBulkRows(rows => rows.map(r => ({
+      ...r,
+      geo: bulkAll.geo || r.geo,
+      zalivshik: bulkAll.zalivshik || r.zalivshik,
+      funnel: bulkAll.funnel || r.funnel,
+    })))
+    showToast('Применено ко всем ✓')
+  }
+  function bulkSetRow(i, patch) {
+    setBulkRows(rows => rows.map((r, idx) => idx === i ? { ...r, ...patch } : r))
+  }
+  function bulkClose() {
+    setShowBulk(false); setBulkText(''); setBulkRows([]); setBulkAll({ geo:'', zalivshik:'', funnel:'' })
+  }
+  async function bulkAddAll() {
+    if (bulkRows.length === 0) return
+    setBulkSaving(true)
+    const res = await api('/api/accounts/bulk', { method:'POST', body: JSON.stringify({ accounts: bulkRows }) })
+    setBulkSaving(false)
+    if (res.error) { showToast('Ошибка: ' + res.error); return }
+    await load()
+    bulkClose()
+    showToast(`Добавлено: ${res.created} ✓`)
+  }
+
   function toggleArr(val, arr, setArr) {
     setArr(arr.includes(val) ? arr.filter(x => x !== val) : [...arr, val])
   }
@@ -321,8 +397,7 @@ export default function Home() {
 
   const s = search.toLowerCase()
   const filtered = accounts.filter(a => {
-    if (search && !a.name?.toLowerCase().includes(s) &&
-        !a.google_ads_id?.includes(search) && !a.zalivshik?.toLowerCase().includes(s)) return false
+    if (search && !SEARCH_FIELDS.some(f => matchField(a, f, s))) return false
     if (statusSel.length && !statusSel.includes(a.status)) return false
     if (geoSel.length && !geoSel.includes(a.geo)) return false
     if (zalivSel.length && !zalivSel.includes(a.zalivshik)) return false
@@ -345,6 +420,13 @@ export default function Home() {
   const curPage = Math.min(page, totalPages)
   const pageRows = pageSize === 'all' ? filtered : filtered.slice((curPage-1)*pageSize, curPage*pageSize)
 
+  let matchedFields = []
+  if (search) {
+    const set = new Set()
+    for (const a of filtered) for (const f of SEARCH_FIELDS) if (matchField(a, f, s)) set.add(f.label)
+    matchedFields = [...set]
+  }
+
   const statusGroups = {}
   STATUSES.forEach(st => { statusGroups[st] = accounts.filter(a => a.status === st).length })
 
@@ -359,12 +441,39 @@ export default function Home() {
 
   function cellContent(key, a, mt) {
     switch (key) {
-      case 'name': return <><div className="acc-name">{a.name||'—'}</div><div className="acc-sub">{a.google_ads_id||''}</div></>
+      case 'name': return (
+        <div className="name-cell">
+          <div style={{minWidth:0}}>
+            <div className="acc-name">{a.name||'—'}</div>
+            <div className="acc-sub">{a.google_ads_id||''}</div>
+          </div>
+          <button className="copy-btn" title="Копировать..." onClick={e=>{e.stopPropagation();setCopyPopup({id:a.id,x:e.clientX,y:e.clientY})}}>⎘</button>
+        </div>
+      )
       case 'status': return (
         <span className="badge" style={{background:STATUS_BG[a.status]||'rgba(107,114,128,.1)',color:STATUS_COLOR[a.status]||'#6b7280'}}>
           <span className="badge-dot" style={{background:STATUS_COLOR[a.status]||'#6b7280'}}/>{a.status||'—'}
         </span>
       )
+      case 'tech_status': {
+        const TS = {
+          'РАБОТАЕТ':{l:'РАБОТАЕТ',c:'#22d17a'},
+          'ВСЕ НА ПАУЗЕ':{l:'ПАУЗЕ',c:'#f5a623'},
+          'ПАУЗЕ':{l:'ПАУЗЕ',c:'#f5a623'},
+          'ПРОВЕРЬ АККАУНТ':{l:'ПРОВЕРЬ',c:'#f5a623'},
+          'ПРОВЕРЬ':{l:'ПРОВЕРЬ',c:'#f5a623'},
+          'НЕТ СВЯЗИ':{l:'НЕТ СВЯЗИ',c:'#f05555'},
+        }
+        const info = TS[a.tech_status]
+        const frozen = FROZEN.includes(a.status)
+        const hasMetrics = mt.today_cost>0 || mt.clicks>0
+        return (
+          <span className="cell-sm" style={{color:info?info.c:'var(--t3)',fontFamily:'JetBrains Mono'}}>
+            {info?info.l:(a.tech_status||'—')}
+            {frozen && hasMetrics && <span title="Метрики приходят на замороженный аккаунт"> ⚠️</span>}
+          </span>
+        )
+      }
       case 'geo': return <span className="cell-sm">{a.geo||'—'}</span>
       case 'funnel': return <span className="cell-sm">{a.funnel||'—'}</span>
       case 'creo': return <span className="cell-sm">{a.creo||'—'}</span>
@@ -411,6 +520,11 @@ export default function Home() {
         .srch input:focus{border-color:var(--acc)}
         .srch input::placeholder{color:var(--t3)}
         .srch-ic{position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--t3);font-size:13px;pointer-events:none}
+        .srch-hint{position:absolute;top:calc(100% + 3px);left:0;font-size:10px;color:var(--acc);background:var(--s2);border:1px solid var(--bd);border-radius:4px;padding:2px 7px;white-space:nowrap;z-index:30;max-width:320px;overflow:hidden;text-overflow:ellipsis}
+        .name-cell{display:flex;align-items:center;justify-content:space-between;gap:6px}
+        .copy-btn{opacity:0;background:var(--s3);border:1px solid var(--bd);border-radius:4px;color:var(--t2);cursor:pointer;font-size:12px;padding:1px 6px;flex-shrink:0;transition:opacity .1s}
+        .copy-btn:hover{color:var(--acc);border-color:var(--acc)}
+        tbody tr:hover .copy-btn{opacity:1}
         .tb-stats{display:flex;gap:14px;margin-left:auto}
         .tbs{font-size:11px;color:var(--t3);font-family:'JetBrains Mono',monospace;white-space:nowrap}
         .tbs b{color:var(--t);font-weight:500}
@@ -546,7 +660,12 @@ export default function Home() {
           <div className="sep"/>
           <div className="srch">
             <span className="srch-ic">⌕</span>
-            <input placeholder="Поиск..." value={search} onChange={e=>setSearch(e.target.value)}/>
+            <input placeholder="Поиск по всем полям..." value={search} onChange={e=>setSearch(e.target.value)}/>
+            {search && (
+              <div className="srch-hint">
+                {matchedFields.length ? `найдено по: ${matchedFields.join(', ')}` : 'ничего не найдено'}
+              </div>
+            )}
           </div>
           <div className="tb-stats">
             <div className="tbs">Всего: <b>{totalAccounts}</b></div>
@@ -558,6 +677,7 @@ export default function Home() {
             {syncTime && <span style={{fontSize:10,color:'var(--t3)',fontFamily:'JetBrains Mono'}}>обн. {syncTime}</span>}
             <button className="btn" onClick={load}>↻</button>
             <button className="btn" onClick={toggleTheme}>{dark?'☀️':'🌙'}</button>
+            <button className="btn" onClick={()=>setShowBulk(true)}>📋 Массовое</button>
             <button className="btn btn-acc" onClick={()=>setShowAdd(true)}>+ Аккаунт</button>
           </div>
         </div>
@@ -761,6 +881,24 @@ export default function Home() {
         </div>
       )}
 
+      {/* COPY POPUP */}
+      {copyPopup && (() => {
+        const a = accounts.find(x => x.id === copyPopup.id) || {}
+        return (
+          <div style={{position:'fixed',inset:0,zIndex:399}} onClick={()=>setCopyPopup(null)}>
+            <div className="status-popup" style={{left:Math.min(copyPopup.x,window.innerWidth-200),top:Math.min(copyPopup.y+4,window.innerHeight-280)}}>
+              <div className="sp-item" onClick={e=>{e.stopPropagation();copyText(a.name,'название')}}>Копировать название</div>
+              <div className="sp-item" onClick={e=>{e.stopPropagation();copyText(a.google_ads_id,'Google Ads ID')}}>Копировать Google Ads ID</div>
+              <div className="sp-item" onClick={e=>{e.stopPropagation();copyText(a.link,'White ссылку')}}>Копировать White ссылку</div>
+              <div className="sp-item" onClick={e=>{e.stopPropagation();copyText(a.black,'Black UTM')}}>Копировать Black UTM</div>
+              <div className="sp-item" onClick={e=>{e.stopPropagation();copyText(a.google_tag,'Google Tag')}}>Копировать Google Tag</div>
+              <div className="sp-item" onClick={e=>{e.stopPropagation();copyText(a.clo_url,'CLO')}}>Копировать CLO</div>
+              <div className="sp-item" style={{borderTop:'1px solid var(--bd)',marginTop:3,paddingTop:7,color:'var(--acc)'}} onClick={e=>{e.stopPropagation();copyAll(a)}}>⎘ Копировать всё</div>
+            </div>
+          </div>
+        )
+      })()}
+
       {/* DRAWER */}
       <div className={`dbg${drawer?' open':''}`} onClick={()=>setDrawer(null)}/>
       <div className={`drawer${drawer?' open':''}`}>
@@ -909,6 +1047,74 @@ export default function Home() {
               <button className="btn" onClick={()=>setShowAdd(false)}>Отмена</button>
               <button className="btn btn-acc" onClick={addAccount} disabled={saving}>{saving?'Добавляем...':'Добавить аккаунт'}</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* BULK ADD MODAL */}
+      {showBulk && (
+        <div className="modal-bg" onClick={bulkClose}>
+          <div className="modal" onClick={e=>e.stopPropagation()} style={{width:760}}>
+            <h2>📋 Массовое добавление аккаунтов</h2>
+            {bulkRows.length === 0 ? (
+              <>
+                <div style={{fontSize:11,color:'var(--t3)',marginBottom:6}}>Вставь список названий — каждое с новой строки</div>
+                <textarea
+                  value={bulkText}
+                  onChange={e=>setBulkText(e.target.value)}
+                  placeholder={"SL-USA-201\nSL-USA-202\nGS-USA-15"}
+                  style={{width:'100%',minHeight:200,background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:6,padding:10,color:'var(--t)',fontSize:13,fontFamily:'JetBrains Mono',outline:'none',resize:'vertical'}}
+                />
+                <div className="modal-acts">
+                  <button className="btn" onClick={bulkClose}>Отмена</button>
+                  <button className="btn btn-acc" onClick={bulkParse} disabled={!bulkText.trim()}>Распарсить →</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{display:'flex',alignItems:'flex-end',gap:8,padding:'10px',background:'var(--s2)',borderRadius:6,marginBottom:12,flexWrap:'wrap'}}>
+                  <span style={{fontSize:10,color:'var(--t3)',textTransform:'uppercase',letterSpacing:'.05em',width:'100%'}}>Применить ко всем</span>
+                  <div className="fi" style={{flex:1,minWidth:120}}><label>Гео</label><input value={bulkAll.geo} onChange={e=>setBulkAll({...bulkAll,geo:e.target.value})} placeholder="KR"/></div>
+                  <div className="fi" style={{flex:1,minWidth:120}}><label>Заливщик</label><input value={bulkAll.zalivshik} onChange={e=>setBulkAll({...bulkAll,zalivshik:e.target.value})} placeholder="Имя"/></div>
+                  <div className="fi" style={{flex:1,minWidth:120}}><label>Воронка</label><input value={bulkAll.funnel} onChange={e=>setBulkAll({...bulkAll,funnel:e.target.value})} placeholder="281"/></div>
+                  <button className="btn" onClick={bulkApplyAll}>Применить</button>
+                </div>
+
+                <div style={{maxHeight:'45vh',overflowY:'auto',border:'1px solid var(--bd)',borderRadius:6}}>
+                  <table className="metric-table" style={{marginBottom:0}}>
+                    <thead><tr>
+                      <th style={{textAlign:'left'}}>Название</th>
+                      <th>Статус</th><th>Гео</th><th>Заливщик</th><th>Воронка</th><th></th>
+                    </tr></thead>
+                    <tbody>
+                      {bulkRows.map((r,i)=>(
+                        <tr key={i}>
+                          <td style={{textAlign:'left'}}>
+                            <input value={r.name} onChange={e=>bulkSetRow(i,{name:e.target.value})} style={{background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:3,padding:'3px 6px',color:'var(--t)',fontSize:11,fontFamily:'JetBrains Mono',outline:'none',width:'100%'}}/>
+                          </td>
+                          <td>
+                            <select value={r.status} onChange={e=>bulkSetRow(i,{status:e.target.value})} className="ssel" style={{width:'100%'}}>
+                              {STATUSES.map(st=><option key={st}>{st}</option>)}
+                            </select>
+                          </td>
+                          <td><input value={r.geo} onChange={e=>bulkSetRow(i,{geo:e.target.value})} style={{background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:3,padding:'3px 6px',color:'var(--t)',fontSize:11,outline:'none',width:'100%',textAlign:'center'}}/></td>
+                          <td><input value={r.zalivshik} onChange={e=>bulkSetRow(i,{zalivshik:e.target.value})} style={{background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:3,padding:'3px 6px',color:'var(--t)',fontSize:11,outline:'none',width:'100%',textAlign:'center'}}/></td>
+                          <td><input value={r.funnel} onChange={e=>bulkSetRow(i,{funnel:e.target.value})} style={{background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:3,padding:'3px 6px',color:'var(--t)',fontSize:11,outline:'none',width:'100%',textAlign:'center'}}/></td>
+                          <td><button className="btn btn-del" style={{padding:'2px 7px'}} onClick={()=>setBulkRows(rows=>rows.filter((_,idx)=>idx!==i))}>✕</button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="modal-acts">
+                  <button className="btn" onClick={()=>setBulkRows([])}>← Назад</button>
+                  <button className="btn btn-acc" onClick={bulkAddAll} disabled={bulkSaving||bulkRows.length===0}>
+                    {bulkSaving?'Добавляем...':`Добавить все (${bulkRows.length})`}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
