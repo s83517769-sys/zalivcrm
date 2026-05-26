@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import Head from 'next/head'
 import Link from 'next/link'
-
-const API_KEY = 'c4194b8cb195929b2a8a1284d65b4347ddded7171af69efd6a51d204eb03f98a'
+import { api } from '../lib/api'
+import { useAuth } from '../lib/useAuth'
 
 const STATUSES = [
   { key: 'Пуск',          color: '#4ea8de', bg: 'rgba(78,168,222,.12)' },
@@ -23,15 +23,12 @@ const STATUSES = [
   { key: 'Отмена запуска',color: '#f05555', bg: 'rgba(240,85,85,.08)' },
 ]
 
-function api(path) {
-  return fetch(path, { headers: { 'x-api-key': API_KEY } }).then(r => r.json())
-}
-
 function getDaysInMonth(year, month) {
   return new Date(year, month + 1, 0).getDate()
 }
 
 export default function Stats() {
+  const { user, signOut } = useAuth()
   const [accounts, setAccounts] = useState([])
   const [metrics, setMetrics] = useState({})
   const [loading, setLoading] = useState(true)
@@ -208,6 +205,8 @@ export default function Stats() {
           {zalivshiki.length > 0 && <button className={`btn${view==='zalivshik'?' act':''}`} onClick={()=>setView('zalivshik')}>По заливщикам</button>}
           <div className="sep"/>
           <button className="btn" onClick={()=>{const n=dark?'light':'dark';setDark(n==='dark');localStorage.setItem('zcrm_theme',n)}}>{dark?'☀️':'🌙'}</button>
+          {user && <span style={{fontSize:11,color:'var(--t2)',marginLeft:4}}>{user.user_metadata?.name || user.email}</span>}
+          <button className="btn" onClick={signOut}>Выйти</button>
         </div>
       </div>
 

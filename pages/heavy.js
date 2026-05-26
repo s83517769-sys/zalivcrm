@@ -1,17 +1,11 @@
 import { useEffect, useState } from 'react'
 import Head from 'next/head'
 import Link from 'next/link'
-
-const API_KEY = 'c4194b8cb195929b2a8a1284d65b4347ddded7171af69efd6a51d204eb03f98a'
-
-function api(path, opts={}) {
-  return fetch(path, {
-    ...opts,
-    headers: { 'x-api-key': API_KEY, 'Content-Type': 'application/json', ...(opts.headers||{}) }
-  }).then(r => r.json())
-}
+import { api } from '../lib/api'
+import { useAuth } from '../lib/useAuth'
 
 export default function Heavy() {
+  const { user, signOut } = useAuth()
   const [accounts, setAccounts] = useState([])
   const [metrics, setMetrics] = useState({})
   const [loading, setLoading] = useState(true)
@@ -180,8 +174,10 @@ export default function Heavy() {
         <Link href="/urls" className="nav-link">🔗 URL / CLO</Link>
         <Link href="/heavy" className="nav-link act">💪 Heavy</Link>
         <Link href="/archive" className="nav-link">🗄 Архив</Link>
-        <div style={{marginLeft:'auto'}}>
+        <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:6}}>
           <button className="btn" onClick={()=>{const n=dark?'light':'dark';setDark(n==='dark');localStorage.setItem('zcrm_theme',n)}}>{dark?'☀️':'🌙'}</button>
+          {user && <span style={{fontSize:11,color:'var(--t2)'}}>{user.user_metadata?.name || user.email}</span>}
+          <button className="btn" onClick={signOut}>Выйти</button>
         </div>
       </div>
 

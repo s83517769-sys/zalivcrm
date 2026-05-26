@@ -1,8 +1,8 @@
 import { useEffect, useState, useRef } from 'react'
 import Head from 'next/head'
 import Link from 'next/link'
-
-const API_KEY = 'c4194b8cb195929b2a8a1284d65b4347ddded7171af69efd6a51d204eb03f98a'
+import { api } from '../lib/api'
+import { useAuth } from '../lib/useAuth'
 
 const STATUSES = [
   'Пуск','Модерация','Крутит','Крутит (огран)','Дизапрув','Разлог','Апила',
@@ -98,13 +98,6 @@ const EMPTY_FORM = {
   launch_date:'', crut_date:'', ban_date:'', ban_reason:''
 }
 
-function api(path, opts={}) {
-  return fetch(path, {
-    ...opts,
-    headers: { 'x-api-key': API_KEY, 'Content-Type': 'application/json', ...(opts.headers||{}) }
-  }).then(r => r.json())
-}
-
 function money(v) { const n=+v||0; if(!n) return '—'; return n>=1000?'$'+Math.round(n).toLocaleString('ru'):'$'+n.toFixed(0) }
 
 function metricsOf(a, summary) {
@@ -148,6 +141,7 @@ function sortVal(key, a, summary) {
 }
 
 export default function Home() {
+  const { user, signOut } = useAuth()
   const [accounts, setAccounts] = useState([])
   const [loading, setLoading] = useState(true)
   const [dark, setDark] = useState(true)
@@ -696,6 +690,9 @@ export default function Home() {
             <button className="btn" onClick={toggleTheme}>{dark?'☀️':'🌙'}</button>
             <button className="btn" onClick={()=>setShowBulk(true)}>📋 Массовое</button>
             <button className="btn btn-acc" onClick={()=>setShowAdd(true)}>+ Аккаунт</button>
+            <div className="sep"/>
+            {user && <span style={{fontSize:11,color:'var(--t2)',whiteSpace:'nowrap'}}>{user.user_metadata?.name || user.email}</span>}
+            <button className="btn" onClick={signOut}>Выйти</button>
           </div>
         </div>
 
