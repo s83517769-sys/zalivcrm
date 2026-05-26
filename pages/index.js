@@ -309,7 +309,7 @@ export default function Home() {
           <div className="logo">Залив<em>CRM</em><span className="live">● live</span></div>
           <div className="sep"/>
           <Link href="/" style={{fontSize:12,color:'var(--acc)',fontWeight:500,textDecoration:'none',padding:'4px 10px',background:'rgba(91,110,245,.1)',borderRadius:4}}>Аккаунты</Link>
-          <Link href="/stats" style={{fontSize:12,color:'var(--t3)',textDecoration:'none',padding:'4px 10px',borderRadius:4}}>📊 Статистика</Link>
+          <Link href="/stats" style={{fontSize:12,color:'var(--t3)',textDecoration:'none',padding:'4px 10px',borderRadius:4}}>📊 Статистика</Link>           <Link href="/proxy" style={{fontSize:12,color:'var(--t3)',textDecoration:'none',padding:'4px 10px',borderRadius:4}}>🌐 Прокси</Link>
           <div className="sep"/>
           <div className="srch">
             <span className="srch-ic">⌕</span>
