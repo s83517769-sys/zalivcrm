@@ -1,130 +1,110 @@
-/**
- * POST /api/watchdog
- *
- * Принимает проверки от watchdog скрипта.
- * Скрипт стоит на одном аккаунте и проверяет все остальные.
- *
- * Body:
- * {
- *   api_key: "user_api_key",
- *   dead_hours: 2,
- *   events: [{
- *     name: "SL-USA-122",
- *     google_ads_id: "778-546-0052",
- *     has_data_today: false,
- *     checked_at: "2026-05-20T14:00:00Z"
- *   }]
- * }
- */
-
 import { supabaseAdmin } from '../../lib/supabase'
 
+const API_KEY = 'c4194b8cb195929b2a8a1284d65b4347ddded7171af69efd6a51d204eb03f98a'
+const USER_ID = '6c5ac05d-b307-46dc-a162-00a09a1e020a'
+
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' })
-  }
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
 
-  const { api_key, events, dead_hours = 2 } = req.body
+  const key = req.headers['x-api-key'] || req.body?.api_key
+  if (key !== API_KEY) return res.status(401).json({ error: 'Unauthorized' })
 
-  if (!api_key) return res.status(401).json({ error: 'API key required' })
-
-  const { data: user } = await supabaseAdmin
-    .from('users')
-    .select('id')
-    .eq('api_key', api_key)
-    .single()
-
-  if (!user) return res.status(401).json({ error: 'Invalid API key' })
-
+  const { events, dead_hours = 2 } = req.body
   if (!events || !Array.isArray(events)) {
-    return res.status(400).json({ error: 'No events' })
+    return res.status(400).json({ error: 'events array required' })
   }
 
-  const userId = user.id
+  const results = { alive: [], dead: [], not_found: [] }
+
+  // Получаем все аккаунты из CRM
+  const { data: allAccounts } = await supabaseAdmin
+    .from('accounts')
+    .select('id, name, google_ads_id, last_seen_at, watchdog_status, status, tech_status')
+    .eq('user_id', USER_ID)
+    .eq('is_archived', false)
+
   const now = new Date()
-  const marked_dead = []
-  const marked_alive = []
+  const deadThreshold = dead_hours * 60 * 60 * 1000 // в миллисекундах
 
+  // Обрабатываем каждый аккаунт из watchdog событий
   for (const event of events) {
-    const name = (event.name || '').replace(/\\_/g, '_').trim()
-    if (!name) continue
+    const cleanId = (event.google_ads_id || '').replace(/-/g, '')
 
-    // Найти аккаунт
-    const { data: account } = await supabaseAdmin
+    // Ищем в CRM
+    const account = allAccounts?.find(a =>
+      a.google_ads_id === cleanId ||
+      a.name === event.name
+    )
+
+    if (!account) {
+      results.not_found.push({ name: event.name, google_ads_id: event.google_ads_id })
+      continue
+    }
+
+    // Обновляем last_seen_at
+    await supabaseAdmin
       .from('accounts')
-      .select('id, tech_status, manual_status, last_seen_at, watchdog_status')
-      .eq('user_id', userId)
-      .eq('name', name)
-      .single()
+      .update({
+        last_seen_at: now.toISOString(),
+        watchdog_status: 'alive',
+        tech_status: account.tech_status === 'НЕТ СВЯЗИ' ? 'ПРОВЕРЬ АККАУНТ' : account.tech_status,
+      })
+      .eq('id', account.id)
 
-    if (!account) continue
+    results.alive.push({ name: account.name, id: account.id })
+  }
 
-    // Пропускаем если ручной статус финальный (БАН, Отклон и т.д.)
-    const finalStatuses = ['БАН', 'отклон', 'Вериф', 'Вериф BOV', 'Ком Вериф',
-      'Оплата 20', 'Оплата 40', 'Оплата 50', 'Оплата 200', 'На смену']
-    if (finalStatuses.includes(account.manual_status)) continue
+  // Проверяем аккаунты которые НЕ пришли в этом watchdog батче
+  // — значит они мертвы
+  const reportedIds = new Set(
+    events.map(e => (e.google_ads_id || '').replace(/-/g, ''))
+  )
 
-    const lastSeen = account.last_seen_at ? new Date(account.last_seen_at) : null
-    const hoursAgo = lastSeen ? (now - lastSeen) / 3600000 : null
+  for (const account of (allAccounts || [])) {
+    // Пропускаем заморозеные и те что пришли в отчёте
+    if (account.status === 'БАН' || account.status === 'На смену' || account.status === 'Отмена запуска') continue
+    if (reportedIds.has(account.google_ads_id || '')) continue
 
-    const isDead = hoursAgo !== null && hoursAgo >= dead_hours
-    const wasAlive = account.watchdog_status === 'alive'
-    const wasDead = account.watchdog_status === 'dead'
+    // Проверяем когда последний раз видели
+    if (!account.last_seen_at) continue
+    const lastSeen = new Date(account.last_seen_at)
+    const diff = now - lastSeen
 
-    if (isDead && wasAlive) {
-      // Аккаунт умер
+    if (diff > deadThreshold) {
+      // Помечаем как мёртвый
       await supabaseAdmin
         .from('accounts')
         .update({
-          tech_status: 'НЕТ СВЯЗИ',
           watchdog_status: 'dead',
-          updated_at: now.toISOString(),
+          tech_status: 'НЕТ СВЯЗИ',
         })
         .eq('id', account.id)
 
+      // Пишем событие
       await supabaseAdmin
         .from('watchdog_events')
         .insert({
           account_id: account.id,
-          user_id: userId,
+          user_id: USER_ID,
           event_type: 'died',
-          old_status: account.tech_status,
-          new_status: 'НЕТ СВЯЗИ',
-          hours_dead: hoursAgo ? Math.round(hoursAgo * 10) / 10 : null,
-          message: `Нет данных ${hoursAgo ? Math.round(hoursAgo) : '?'} ч.`,
+          hours_dead: Math.round(diff / 3600000 * 10) / 10,
+          message: `Нет обновлений ${Math.round(diff / 3600000)}ч`,
         })
 
-      marked_dead.push(name)
-
-    } else if (!isDead && wasDead) {
-      // Аккаунт ожил
-      await supabaseAdmin
-        .from('accounts')
-        .update({
-          tech_status: 'ПРОВЕРЬ АККАУНТ',
-          watchdog_status: 'alive',
-          updated_at: now.toISOString(),
-        })
-        .eq('id', account.id)
-
-      await supabaseAdmin
-        .from('watchdog_events')
-        .insert({
-          account_id: account.id,
-          user_id: userId,
-          event_type: 'revived',
-          old_status: 'НЕТ СВЯЗИ',
-          new_status: 'ПРОВЕРЬ АККАУНТ',
-          message: 'Аккаунт снова передаёт данные',
-        })
-
-      marked_alive.push(name)
+      results.dead.push({
+        name: account.name,
+        id: account.id,
+        hours_dead: Math.round(diff / 3600000 * 10) / 10
+      })
     }
   }
 
   return res.status(200).json({
     ok: true,
-    dead: marked_dead,
-    alive: marked_alive,
+    alive: results.alive.length,
+    dead: results.dead.length,
+    not_found: results.not_found.length,
+    dead_accounts: results.dead,
+    not_found_accounts: results.not_found,
   })
 }
