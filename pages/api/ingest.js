@@ -73,17 +73,23 @@ export default async function handler(req, res) {
       }
 
       // Обновляем tech_status и last_seen_at
+      const FROZEN = ['БАН', 'На смену', 'Отмена запуска']
+      const isFrozen = FROZEN.includes(account.status)
+
       const updates = {
         last_seen_at: new Date().toISOString(),
         watchdog_status: 'alive',
         google_ads_id: cleanId || account.google_ads_id,
       }
-      if (tech_status) updates.tech_status = tech_status
       if (currency) updates.currency = currency
 
-      // Автодата крута
-      if (tech_status === 'РАБОТАЕТ' && !account.crut_date) {
-        updates.crut_date = today
+      // Замороженный аккаунт: тех. статус скриптом не трогаем (метрики всё равно пишем ниже)
+      if (!isFrozen) {
+        if (tech_status) updates.tech_status = tech_status
+        // Автодата крута
+        if (tech_status === 'РАБОТАЕТ' && !account.crut_date) {
+          updates.crut_date = today
+        }
       }
 
       await supabaseAdmin
