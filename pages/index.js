@@ -318,6 +318,7 @@ export default function Home() {
           <Link href="/proxy" style={{fontSize:12,color:"var(--t3)",textDecoration:"none",padding:"4px 10px",borderRadius:4}}>🌐 Прокси</Link>
           <Link href="/urls" style={{fontSize:12,color:"var(--t3)",textDecoration:"none",padding:"4px 10px",borderRadius:4}}>🔗 URL / CLO</Link>
           <Link href="/heavy" style={{fontSize:12,color:"var(--t3)",textDecoration:"none",padding:"4px 10px",borderRadius:4}}>💪 Heavy</Link>
+          <Link href="/archive" style={{fontSize:12,color:"var(--t3)",textDecoration:"none",padding:"4px 10px",borderRadius:4}}>🗄 Архив</Link>
           <div className="sep"/>
           <div className="srch">
             <span className="srch-ic">⌕</span>
