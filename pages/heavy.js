@@ -179,6 +179,7 @@ export default function Heavy() {
         <Link href="/proxy" className="nav-link">🌐 Прокси</Link>
         <Link href="/urls" className="nav-link">🔗 URL / CLO</Link>
         <Link href="/heavy" className="nav-link act">💪 Heavy</Link>
+        <Link href="/archive" className="nav-link">🗄 Архив</Link>
         <div style={{marginLeft:'auto'}}>
           <button className="btn" onClick={()=>{const n=dark?'light':'dark';setDark(n==='dark');localStorage.setItem('zcrm_theme',n)}}>{dark?'☀️':'🌙'}</button>
         </div>
