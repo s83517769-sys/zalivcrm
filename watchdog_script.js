@@ -8,7 +8,7 @@
  */
 
 const API_KEY   = 'YOUR_API_KEY_HERE';   // ← тот же ключ
-const API_URL   = 'https://zaliv.app/api/watchdog';
+const API_URL   = 'https://zalivcrm.vercel.app/api/watchdog';
 const DEAD_HOURS = 2;
 
 function watchdogMain() {

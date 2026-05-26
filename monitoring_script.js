@@ -9,7 +9,7 @@
  */
 
 const API_KEY     = 'YOUR_API_KEY_HERE';   // ← вставь свой ключ
-const API_URL     = 'https://zaliv.app/api/ingest';
+const API_URL     = 'https://zalivcrm.vercel.app/api/ingest';
 const DEAD_HOURS  = 2;                      // часов без данных = НЕТ СВЯЗИ
 const TIMEZONE    = 'Europe/Moscow';        // твой часовой пояс
 
