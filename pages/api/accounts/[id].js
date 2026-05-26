@@ -1,76 +1,79 @@
-/**
- * PATCH /api/accounts/[id]
- * Update account manual fields: manual_status, card, comment, etc.
- */
-
 import { supabaseAdmin } from '../../../lib/supabase'
 
+const API_KEY = 'c4194b8cb195929b2a8a1284d65b4347ddded7171af69efd6a51d204eb03f98a'
+const USER_ID = '6c5ac05d-b307-46dc-a162-00a09a1e020a'
+
 export default async function handler(req, res) {
+  const key = req.headers['x-api-key']
+  if (key !== API_KEY) return res.status(401).json({ error: 'Unauthorized' })
   const { id } = req.query
 
-  if (req.method !== 'PATCH') {
-    return res.status(405).json({ error: 'Method not allowed' })
-  }
+  if (req.method === 'PATCH') {
+    const body = { ...req.body }
+    const now = new Date()
+    const today = now.toISOString().split('T')[0]
 
-  const apiKey = req.headers['x-api-key']
-  if (!apiKey) return res.status(401).json({ error: 'No API key' })
+    // Получаем текущий аккаунт
+    const { data: current } = await supabaseAdmin
+      .from('accounts')
+      .select('*')
+      .eq('id', id)
+      .single()
 
-  const { data: user } = await supabaseAdmin
-    .from('users')
-    .select('id')
-    .eq('api_key', apiKey)
-    .single()
+    if (!current) return res.status(404).json({ error: 'Not found' })
 
-  if (!user) return res.status(401).json({ error: 'Invalid API key' })
+    // Логика автодат
+    if (body.status && body.status !== current.status) {
+      if (body.status === 'Пуск' && !current.launch_date) {
+        body.launch_date = today
+      }
+      if (body.status && body.status.toLowerCase().includes('крутит') && !current.crut_date) {
+        body.crut_date = today
+      }
+      const frozen = ['БАН', 'На смену', 'Отмена запуска']
+      if (frozen.includes(body.status)) {
+        body.is_frozen = true
+        if (!current.ban_date) body.ban_date = today
+      }
 
-  // Проверяем что аккаунт принадлежит пользователю
-  const { data: account } = await supabaseAdmin
-    .from('accounts')
-    .select('id, manual_status')
-    .eq('id', id)
-    .eq('user_id', user.id)
-    .single()
-
-  if (!account) return res.status(404).json({ error: 'Account not found' })
-
-  const allowed = [
-    'manual_status', 'card', 'clo_url', 'black_utm', 'white_id',
-    'comment', 'dis_date', 'dis_reason', 'dis_solution',
-    'domain', 'format', 'crea', 'voronka', 'google_tag',
-    'geo', 'lang', 'devices', 'is_archived', 'is_hidden',
-  ]
-
-  const updates = {}
-  for (const key of allowed) {
-    if (req.body[key] !== undefined) updates[key] = req.body[key]
-  }
-
-  if (Object.keys(updates).length === 0) {
-    return res.status(400).json({ error: 'No fields to update' })
-  }
-
-  updates.updated_at = new Date().toISOString()
-
-  const { error } = await supabaseAdmin
-    .from('accounts')
-    .update(updates)
-    .eq('id', id)
-
-  if (error) return res.status(500).json({ error: error.message })
-
-  // Логируем смену ручного статуса
-  if (updates.manual_status && updates.manual_status !== account.manual_status) {
-    await supabaseAdmin
-      .from('account_history')
-      .insert({
+      // Пишем историю
+      await supabaseAdmin.from('account_history').insert({
         account_id: id,
-        user_id: user.id,
-        change_type: 'status',
-        field_name: 'manual_status',
-        old_value: account.manual_status || '—',
-        new_value: updates.manual_status,
+        user_id: USER_ID,
+        field_name: 'status',
+        old_value: current.status,
+        new_value: body.status,
       })
+    }
+
+    // Логируем изменение дизапрува
+    if (body.dis_reason && body.dis_reason !== current.dis_reason) {
+      await supabaseAdmin.from('account_history').insert({
+        account_id: id,
+        user_id: USER_ID,
+        field_name: 'dis_reason',
+        old_value: current.dis_reason,
+        new_value: body.dis_reason,
+      })
+    }
+
+    const { error } = await supabaseAdmin
+      .from('accounts')
+      .update({ ...body, updated_at: now.toISOString() })
+      .eq('id', id)
+
+    if (error) return res.status(500).json({ error: error.message })
+    return res.status(200).json({ ok: true })
   }
 
-  return res.status(200).json({ ok: true })
+  if (req.method === 'DELETE') {
+    const { error } = await supabaseAdmin
+      .from('accounts')
+      .update({ is_archived: true })
+      .eq('id', id)
+    if (error) return res.status(500).json({ error: error.message })
+    return res.status(200).json({ ok: true })
+  }
+
+  return res.status(405).json({ error: 'Method not allowed' })
 }
