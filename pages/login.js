@@ -36,7 +36,7 @@ export default function Login() {
     setErr(''); setBusy(true)
     const { error } = await supabaseClient.auth.signInWithOAuth({
       provider: 'github',
-      options: { redirectTo: 'https://zalivcrm.vercel.app/' },
+      options: { redirectTo: `${window.location.origin}/` },
     })
     if (error) { setBusy(false); setErr(error.message) }
   }
