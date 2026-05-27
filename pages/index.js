@@ -813,10 +813,39 @@ export default function Home() {
 
             <div className="tbl-wrap">
               {filtered.length === 0 && !loading ? (
-                <div style={{padding:'60px',textAlign:'center',color:'var(--t3)',lineHeight:2}}>
-                  <div style={{fontSize:14,color:'var(--t)',marginBottom:8}}>Ничего не найдено</div>
-                  <div>Измени фильтры или нажми <b style={{color:'var(--acc)'}}>+ Аккаунт</b></div>
-                </div>
+                accounts.length === 0 ? (
+                  <div style={{maxWidth:460,margin:'48px auto',padding:'0 20px'}}>
+                    <div style={{fontSize:16,color:'var(--t)',fontWeight:600,marginBottom:4,textAlign:'center'}}>Добро пожаловать в ЗаливCRM 👋</div>
+                    <div style={{fontSize:12,color:'var(--t3)',textAlign:'center',marginBottom:20}}>Три шага, чтобы начать</div>
+                    <div style={{display:'flex',gap:12,alignItems:'flex-start',padding:'12px 0',borderBottom:'1px solid var(--bd)'}}>
+                      <div style={{width:26,height:26,borderRadius:'50%',background:'rgba(91,110,245,.15)',color:'var(--acc)',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:600,fontFamily:'JetBrains Mono',flexShrink:0}}>1</div>
+                      <div>
+                        <div style={{fontSize:13,color:'var(--t)',fontWeight:500,marginBottom:3}}>Добавь первый аккаунт</div>
+                        <div style={{fontSize:12,color:'var(--t3)',lineHeight:1.5}}>Нажми кнопку ниже или загрузи список через «📋 Массовое».</div>
+                        <button className="btn btn-acc" style={{marginTop:8}} onClick={()=>setShowAdd(true)}>+ Аккаунт</button>
+                      </div>
+                    </div>
+                    <div style={{display:'flex',gap:12,alignItems:'flex-start',padding:'12px 0',borderBottom:'1px solid var(--bd)'}}>
+                      <div style={{width:26,height:26,borderRadius:'50%',background:'rgba(91,110,245,.15)',color:'var(--acc)',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:600,fontFamily:'JetBrains Mono',flexShrink:0}}>2</div>
+                      <div>
+                        <div style={{fontSize:13,color:'var(--t)',fontWeight:500,marginBottom:3}}>Установи скрипт мониторинга</div>
+                        <div style={{fontSize:12,color:'var(--t3)',lineHeight:1.5}}>Вставь monitoring_script.js в Google Ads → Tools → Scripts со своим API-ключом. <a href="https://github.com/s83517769-sys/zalivcrm#readme" target="_blank" rel="noreferrer" style={{color:'var(--acc)',textDecoration:'none'}}>Инструкция →</a></div>
+                      </div>
+                    </div>
+                    <div style={{display:'flex',gap:12,alignItems:'flex-start',padding:'12px 0'}}>
+                      <div style={{width:26,height:26,borderRadius:'50%',background:'rgba(91,110,245,.15)',color:'var(--acc)',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:600,fontFamily:'JetBrains Mono',flexShrink:0}}>3</div>
+                      <div>
+                        <div style={{fontSize:13,color:'var(--t)',fontWeight:500,marginBottom:3}}>Готово!</div>
+                        <div style={{fontSize:12,color:'var(--t3)',lineHeight:1.5}}>Данные начнут появляться автоматически каждый час.</div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{padding:'60px',textAlign:'center',color:'var(--t3)',lineHeight:2}}>
+                    <div style={{fontSize:14,color:'var(--t)',marginBottom:8}}>Ничего не найдено</div>
+                    <div>Измени фильтры или нажми <b style={{color:'var(--acc)'}}>+ Аккаунт</b></div>
+                  </div>
+                )
               ) : (
                 <table>
                   <thead><tr>
