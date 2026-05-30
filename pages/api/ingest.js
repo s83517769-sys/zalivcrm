@@ -20,6 +20,20 @@ export default async function handler(req, res) {
   const today = new Date().toISOString().split('T')[0]
   const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0]
 
+  // Терминальные статусы (заморозка tech_status) — из настроек юзера, иначе дефолт
+  let terminalNames = ['БАН', 'На смену', 'Отмена запуска']
+  try {
+    const { data: us } = await supabaseAdmin
+      .from('user_settings')
+      .select('custom_statuses')
+      .eq('user_id', USER_ID)
+      .maybeSingle()
+    if (Array.isArray(us?.custom_statuses)) {
+      const t = us.custom_statuses.filter(s => s.category === 'terminal').map(s => s.name)
+      if (t.length) terminalNames = t
+    }
+  } catch {}
+
   const results = []
   const errors = []
 
@@ -76,8 +90,8 @@ export default async function handler(req, res) {
       }
 
       // Обновляем tech_status и last_seen_at
-      const FROZEN = ['БАН', 'На смену', 'Отмена запуска']
-      const isFrozen = FROZEN.includes(account.status)
+      const isFrozen = terminalNames.includes(account.status)
+      const overridden = Array.isArray(account.metrics_manual_override) ? account.metrics_manual_override : []
 
       const updates = {
         last_seen_at: new Date().toISOString(),
@@ -92,6 +106,18 @@ export default async function handler(req, res) {
         // Автодата крута
         if (tech_status === 'РАБОТАЕТ' && !account.crut_date) {
           updates.crut_date = today
+        }
+      }
+
+      // «Витринные» метрики на строке аккаунта — только если колонка существует
+      // и поле не закреплено вручную (metrics_manual_override)
+      const showcase = {
+        today_cost, today_clicks, today_cpc, today_conv,
+        yest_cost, yest_clicks, yest_cpc, yest_conv,
+      }
+      for (const [f, v] of Object.entries(showcase)) {
+        if (f in account && !overridden.includes(f) && v !== undefined) {
+          updates[f] = v
         }
       }
 
