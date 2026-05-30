@@ -1,7 +1,25 @@
 import { supabaseAdmin } from '../../../lib/supabase'
 import { getUserIdFromRequest } from '../../../lib/auth'
+import {
+  DEFAULT_STATUSES, DEFAULT_GROUPS, DEFAULT_CURRENCY_RATES,
+  DEFAULT_ROW_RULES, DEFAULT_STATUS_AUTOMATIONS,
+} from '../../../lib/defaults'
 
 const DEFAULT_WATCHDOG_HOURS = 2
+
+// Ключи, которые принимаем на запись
+const WRITABLE = [
+  'custom_statuses', 'custom_groups', 'watchdog_hours', 'column_config',
+  'row_rules', 'currency_rates', 'ui_density', 'ui_theme',
+  'status_automations', 'default_sort',
+]
+
+function notEmpty(v) {
+  if (v == null) return false
+  if (Array.isArray(v)) return v.length > 0
+  if (typeof v === 'object') return Object.keys(v).length > 0
+  return true
+}
 
 export default async function handler(req, res) {
   const userId = await getUserIdFromRequest(req)
@@ -17,19 +35,27 @@ export default async function handler(req, res) {
 
     return res.status(200).json({
       settings: {
-        custom_statuses: row?.custom_statuses || [],
-        custom_groups: row?.custom_groups || [],
+        // сид дефолтов, если у пользователя ещё пусто
+        custom_statuses: notEmpty(row?.custom_statuses) ? row.custom_statuses : DEFAULT_STATUSES,
+        custom_groups: notEmpty(row?.custom_groups) ? row.custom_groups : DEFAULT_GROUPS,
         watchdog_hours: row?.watchdog_hours ?? DEFAULT_WATCHDOG_HOURS,
+        column_config: row?.column_config || {},
+        row_rules: notEmpty(row?.row_rules) ? row.row_rules : DEFAULT_ROW_RULES,
+        currency_rates: notEmpty(row?.currency_rates) ? row.currency_rates : DEFAULT_CURRENCY_RATES,
+        ui_density: row?.ui_density || 'cozy',
+        ui_theme: row?.ui_theme || 'dark',
+        status_automations: notEmpty(row?.status_automations) ? row.status_automations : DEFAULT_STATUS_AUTOMATIONS,
+        default_sort: row?.default_sort || null,
       },
     })
   }
 
   if (req.method === 'POST') {
-    const { custom_statuses, custom_groups, watchdog_hours } = req.body || {}
+    const body = req.body || {}
     const patch = { user_id: userId, updated_at: new Date().toISOString() }
-    if (custom_statuses !== undefined) patch.custom_statuses = custom_statuses
-    if (custom_groups !== undefined) patch.custom_groups = custom_groups
-    if (watchdog_hours !== undefined) patch.watchdog_hours = watchdog_hours
+    for (const k of WRITABLE) {
+      if (body[k] !== undefined) patch[k] = body[k]
+    }
 
     const { error } = await supabaseAdmin
       .from('user_settings')
