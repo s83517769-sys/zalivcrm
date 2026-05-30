@@ -95,10 +95,11 @@ export default async function handler(req, res) {
         }
       }
 
-      await supabaseAdmin
+      const { error: updErr } = await supabaseAdmin
         .from('accounts')
         .update(updates)
         .eq('id', account.id)
+      if (updErr) errors.push({ name, stage: 'account_update', error: updErr.message })
 
       // Метрики сегодня
       if (today_cost > 0 || today_clicks > 0) {
