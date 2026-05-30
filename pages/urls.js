@@ -149,6 +149,7 @@ export default function URLs() {
         <Link href="/urls" className="nav-link act">🔗 URL / CLO</Link>
         <Link href="/heavy" className="nav-link">💪 Heavy</Link>
         <Link href="/archive" className="nav-link">🗄 Архив</Link>
+        <Link href="/settings" className="nav-link">⚙️ Настройки</Link>
         <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:6}}>
           <button className="btn" onClick={()=>{const n=dark?'light':'dark';setDark(n==='dark');localStorage.setItem('zcrm_theme',n)}}>{dark?'☀️':'🌙'}</button>
           {user && <span style={{fontSize:11,color:'var(--t2)'}}>{user.user_metadata?.name || user.email}</span>}

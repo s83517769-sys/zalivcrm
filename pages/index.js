@@ -191,6 +191,11 @@ export default function Home() {
   const [pageSize, setPageSize] = useState(50)
   const [page, setPage] = useState(1)
 
+  // ── Перетаскивание строк ──
+  const [rowOrder, setRowOrder] = useState([])
+  const [rowDrag, setRowDrag] = useState(null)
+  const [rowOver, setRowOver] = useState(null) // { id, side: 'top'|'bottom' }
+
   const loaded = useRef(false)
 
   useEffect(() => {
@@ -213,6 +218,10 @@ export default function Home() {
       if (s.colVisible) setColVisible({ ...defaultVisibleMap(), ...s.colVisible })
       if (s.pageSize) setPageSize(s.pageSize)
       if (s.sort && s.sort.key) setSort(s.sort)
+    } catch {}
+    try {
+      const ro = JSON.parse(localStorage.getItem('zcrm_row_order') || '[]')
+      if (Array.isArray(ro)) setRowOrder(ro)
     } catch {}
     loaded.current = true
     load()
@@ -385,6 +394,30 @@ export default function Home() {
     setColVisible(defaultVisibleMap())
   }
 
+  function persistRowOrder(order) {
+    setRowOrder(order)
+    localStorage.setItem('zcrm_row_order', JSON.stringify(order))
+  }
+
+  // Перетаскивание строк: фиксирует текущий видимый порядок и переставляет
+  function dropRow(toId) {
+    const fromId = rowDrag
+    const side = rowOver?.side || 'top'
+    setRowDrag(null); setRowOver(null)
+    if (!fromId || fromId === toId) return
+    // базовый порядок = текущий отображаемый (учитывает сортировку/фильтр),
+    // плюс id, которых нет на экране (другие страницы/фильтры) — в конец
+    const visibleIds = filtered.map(a => a.id)
+    const base = [...visibleIds, ...rowOrder.filter(id => !visibleIds.includes(id))]
+    const next = base.filter(id => id !== fromId)
+    let toI = next.indexOf(toId)
+    if (toI < 0) return
+    if (side === 'bottom') toI += 1
+    next.splice(toI, 0, fromId)
+    persistRowOrder(next)
+    setSort({ key: 'custom', dir: 'asc' }) // ручной порядок сбрасывает сортировку
+  }
+
   // Перетаскивание колонок за заголовок таблицы
   function dropTh(toKey) {
     const fromKey = thDrag
@@ -418,6 +451,12 @@ export default function Home() {
     if (launchTo && (!a.launch_date || a.launch_date > launchTo)) return false
     return true
   }).sort((a, b) => {
+    if (sort.key === 'custom') {
+      const ia = rowOrder.indexOf(a.id), ib = rowOrder.indexOf(b.id)
+      const ra = ia < 0 ? Number.MAX_SAFE_INTEGER : ia
+      const rb = ib < 0 ? Number.MAX_SAFE_INTEGER : ib
+      return ra - rb
+    }
     const va = sortVal(sort.key, a, metricsSummary)
     const vb = sortVal(sort.key, b, metricsSummary)
     let r
@@ -453,7 +492,12 @@ export default function Home() {
     switch (key) {
       case 'name': return (
         <div className="name-cell">
-          <div style={{minWidth:0}}>
+          <span className="row-handle" title="Перетащить строку"
+                draggable
+                onClick={e=>e.stopPropagation()}
+                onDragStart={e=>{e.stopPropagation();setRowDrag(a.id)}}
+                onDragEnd={()=>{setRowDrag(null);setRowOver(null)}}>⠿</span>
+          <div style={{minWidth:0,flex:1}}>
             <div className="acc-name">{a.name||'—'}</div>
             <div className="acc-sub">{a.google_ads_id||''}</div>
           </div>
@@ -531,7 +575,11 @@ export default function Home() {
         .srch input::placeholder{color:var(--t3)}
         .srch-ic{position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--t3);font-size:13px;pointer-events:none}
         .srch-hint{position:absolute;top:calc(100% + 3px);left:0;font-size:10px;color:var(--acc);background:var(--s2);border:1px solid var(--bd);border-radius:4px;padding:2px 7px;white-space:nowrap;z-index:30;max-width:320px;overflow:hidden;text-overflow:ellipsis}
-        .name-cell{display:flex;align-items:center;justify-content:space-between;gap:6px}
+        .name-cell{display:flex;align-items:center;gap:6px}
+        .row-handle{opacity:0;cursor:grab;color:var(--t3);font-size:13px;flex-shrink:0;user-select:none;line-height:1}
+        .row-handle:hover{color:var(--acc)}
+        .row-handle:active{cursor:grabbing}
+        tbody tr:hover .row-handle{opacity:1}
         .copy-btn{opacity:0;background:var(--s3);border:1px solid var(--bd);border-radius:4px;color:var(--t2);cursor:pointer;font-size:12px;padding:1px 6px;flex-shrink:0;transition:opacity .1s}
         .copy-btn:hover{color:var(--acc);border-color:var(--acc)}
         tbody tr:hover .copy-btn{opacity:1}
@@ -668,6 +716,7 @@ export default function Home() {
           <Link href="/urls" style={{fontSize:12,color:"var(--t3)",textDecoration:"none",padding:"4px 10px",borderRadius:4}}>🔗 URL / CLO</Link>
           <Link href="/heavy" style={{fontSize:12,color:"var(--t3)",textDecoration:"none",padding:"4px 10px",borderRadius:4}}>💪 Heavy</Link>
           <Link href="/archive" style={{fontSize:12,color:"var(--t3)",textDecoration:"none",padding:"4px 10px",borderRadius:4}}>🗄 Архив</Link>
+          <Link href="/settings" style={{fontSize:12,color:"var(--t3)",textDecoration:"none",padding:"4px 10px",borderRadius:4}}>⚙️ Настройки</Link>
           <div className="sep"/>
           <div className="srch">
             <span className="srch-ic">⌕</span>
@@ -873,8 +922,16 @@ export default function Home() {
                   <tbody>
                     {pageRows.map(a => {
                       const mt = metricsOf(a, metricsSummary)
+                      const rOver = rowOver && rowOver.id===a.id
+                      const trStyle = {
+                        opacity: rowDrag===a.id ? 0.4 : undefined,
+                        boxShadow: rOver ? (rowOver.side==='top' ? 'inset 0 2px 0 var(--acc)' : 'inset 0 -2px 0 var(--acc)') : undefined,
+                      }
                       return (
-                        <tr key={a.id} className={a.is_frozen?'frozen-row':''} onClick={()=>openDrawer(a)}>
+                        <tr key={a.id} className={a.is_frozen?'frozen-row':''} style={trStyle}
+                            onClick={()=>openDrawer(a)}
+                            onDragOver={rowDrag ? (e=>{e.preventDefault();const r=e.currentTarget.getBoundingClientRect();const side=(e.clientY-r.top)<r.height/2?'top':'bottom';if(!rowOver||rowOver.id!==a.id||rowOver.side!==side)setRowOver({id:a.id,side})}) : undefined}
+                            onDrop={rowDrag ? (e=>{e.preventDefault();dropRow(a.id)}) : undefined}>
                           {visibleCols.map(c=>{
                             const isStatus = c.key==='status'
                             return (
