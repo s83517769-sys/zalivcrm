@@ -3,35 +3,15 @@ import Head from 'next/head'
 import Link from 'next/link'
 import { api } from '../lib/api'
 import { useAuth } from '../lib/useAuth'
+import { DEFAULT_STATUSES } from '../lib/defaults'
 
-const STATUSES = [
-  'Пуск','Модерация','Крутит','Крутит (огран)','Дизапрув','Разлог','Апила',
-  'Вериф','Вериф BOV','Ком Вериф','На смену','БАН','Отмена запуска',
-  'отклон','Пауза','Оплата 20','Оплата 40','Оплата 50','Оплата 200',
-  'В ожидании','пустой'
-]
-
-const STATUS_COLOR = {
-  'Пуск':'#4ea8de','Модерация':'#f5a623','Крутит':'#22d17a','Крутит (огран)':'#22d17a',
-  'Дизапрув':'#f5a623','Разлог':'#f5a623','Апила':'#f5a623',
-  'Вериф':'#c084fc','Вериф BOV':'#c084fc','Ком Вериф':'#c084fc',
-  'На смену':'#f05555','БАН':'#f05555','Отмена запуска':'#f05555',
-  'отклон':'#f5a623','Пауза':'#4ea8de',
-  'Оплата 20':'#f472b6','Оплата 40':'#f472b6','Оплата 50':'#f472b6','Оплата 200':'#f472b6',
-  'В ожидании':'#6b7280','пустой':'#6b7280',
+// hex → rgba с прозрачностью (для фона бейджа)
+function hexBg(hex, a = 0.13) {
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex || '')
+  if (!m) return 'rgba(107,114,128,.1)'
+  return `rgba(${parseInt(m[1],16)},${parseInt(m[2],16)},${parseInt(m[3],16)},${a})`
 }
 
-const STATUS_BG = {
-  'Крутит':'rgba(34,209,122,.12)','Крутит (огран)':'rgba(34,209,122,.1)',
-  'БАН':'rgba(240,85,85,.12)','На смену':'rgba(240,85,85,.1)','Отмена запуска':'rgba(240,85,85,.1)',
-  'Дизапрув':'rgba(245,166,35,.12)','отклон':'rgba(245,166,35,.1)','Модерация':'rgba(245,166,35,.08)',
-  'Пуск':'rgba(78,168,222,.12)','Пауза':'rgba(78,168,222,.1)',
-  'Вериф':'rgba(192,132,252,.12)','Вериф BOV':'rgba(192,132,252,.1)','Ком Вериф':'rgba(192,132,252,.1)',
-  'Оплата 20':'rgba(244,114,182,.12)','Оплата 40':'rgba(244,114,182,.12)',
-  'Оплата 50':'rgba(244,114,182,.12)','Оплата 200':'rgba(244,114,182,.12)',
-}
-
-const FROZEN = ['БАН','На смену','Отмена запуска']
 const GROUPS = ['SL-USA','GS-USA','MM-NZ','OTHER']
 
 function groupOf(name) {
@@ -159,6 +139,13 @@ export default function Home() {
   const [statusPopup, setStatusPopup] = useState(null)
   const [metricsSummary, setMetricsSummary] = useState({})
   const [copyPopup, setCopyPopup] = useState(null)
+  const [statusDefs, setStatusDefs] = useState(DEFAULT_STATUSES)
+
+  // Статусы из настроек пользователя (custom_statuses)
+  const STATUSES = statusDefs.map(s => s.name)
+  const STATUS_COLOR = Object.fromEntries(statusDefs.map(s => [s.name, s.color]))
+  const STATUS_BG = Object.fromEntries(statusDefs.map(s => [s.name, hexBg(s.color)]))
+  const FROZEN = statusDefs.filter(s => s.category === 'terminal').map(s => s.name)
 
   // ── Массовое добавление ──
   const [showBulk, setShowBulk] = useState(false)
@@ -246,12 +233,16 @@ export default function Home() {
 
   async function load() {
     setLoading(true)
-    const [data, mData] = await Promise.all([
+    const [data, mData, sData] = await Promise.all([
       api('/api/accounts'),
-      api('/api/metrics-summary')
+      api('/api/metrics-summary'),
+      api('/api/users/settings'),
     ])
     setAccounts(data.accounts || [])
     setMetricsSummary(mData.summary || {})
+    if (Array.isArray(sData?.settings?.custom_statuses) && sData.settings.custom_statuses.length) {
+      setStatusDefs(sData.settings.custom_statuses)
+    }
     setLoading(false)
     const now = new Date()
     setSyncTime(now.getHours().toString().padStart(2,'0')+':'+now.getMinutes().toString().padStart(2,'0'))
