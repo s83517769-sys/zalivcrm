@@ -4,23 +4,13 @@ import Link from 'next/link'
 import { api } from '../lib/api'
 import { useAuth } from '../lib/useAuth'
 
-const BASE_STATUSES = [
-  { name:'Пуск', color:'#4ea8de' },{ name:'Модерация', color:'#f5a623' },
-  { name:'Крутит', color:'#22d17a' },{ name:'Крутит (огран)', color:'#22d17a' },
-  { name:'Дизапрув', color:'#f5a623' },{ name:'Разлог', color:'#f5a623' },
-  { name:'Апила', color:'#f5a623' },{ name:'Вериф', color:'#c084fc' },
-  { name:'Вериф BOV', color:'#c084fc' },{ name:'Ком Вериф', color:'#c084fc' },
-  { name:'На смену', color:'#f05555' },{ name:'БАН', color:'#f05555' },
-  { name:'Отмена запуска', color:'#f05555' },{ name:'отклон', color:'#f5a623' },
-  { name:'Пауза', color:'#4ea8de' },{ name:'Оплата 20', color:'#f472b6' },
-  { name:'Оплата 40', color:'#f472b6' },{ name:'Оплата 50', color:'#f472b6' },
-  { name:'Оплата 200', color:'#f472b6' },{ name:'В ожидании', color:'#6b7280' },
-  { name:'пустой', color:'#6b7280' },
+const CATEGORIES = [
+  { k:'active',   l:'Актив',    c:'#22d17a' },
+  { k:'problem',  l:'Проблема', c:'#f5a623' },
+  { k:'terminal', l:'Терминал', c:'#f05555' },
+  { k:'neutral',  l:'Нейтр.',   c:'#6b7280' },
 ]
-const BASE_GROUPS = [
-  { prefix:'SL-USA', color:'#4ea8de' },{ prefix:'GS-USA', color:'#22d17a' },
-  { prefix:'MM-NZ', color:'#c084fc' },
-]
+const slug = (s) => (s || '').toLowerCase().replace(/[^a-zа-я0-9]+/gi, '_').replace(/^_+|_+$/g, '') || ('st_' + Date.now())
 
 export default function Settings() {
   const { user, signOut } = useAuth()
@@ -36,8 +26,9 @@ export default function Settings() {
   const [customGroups, setCustomGroups] = useState([])
   const [watchdogHours, setWatchdogHours] = useState(2)
 
-  const [newStatus, setNewStatus] = useState({ name:'', color:'#5b6ef5' })
+  const [newStatus, setNewStatus] = useState({ name:'', color:'#5b6ef5', category:'active' })
   const [newGroup, setNewGroup] = useState({ prefix:'', color:'#5b6ef5' })
+  const [stDrag, setStDrag] = useState(null) // индекс перетаскиваемого статуса
 
   useEffect(() => {
     const t = localStorage.getItem('zcrm_theme')
@@ -92,28 +83,45 @@ export default function Settings() {
     return true
   }
 
-  // ── Статусы ──
+  // ── Статусы (строго из custom_statuses) ──
   const statusCount = (name) => accounts.filter(a => a.status === name).length
+
+  async function persistStatuses(next) {
+    setCustomStatuses(next)
+    return saveSettings({ custom_statuses: next })
+  }
   async function addStatus() {
     const name = newStatus.name.trim()
     if (!name) return showToast('Введи название статуса')
-    if ([...BASE_STATUSES, ...customStatuses].some(s => s.name === name)) return showToast('Такой статус уже есть')
-    const next = [...customStatuses, { name, color: newStatus.color }]
-    setCustomStatuses(next)
-    if (await saveSettings({ custom_statuses: next })) { setNewStatus({ name:'', color:'#5b6ef5' }); showToast('Статус добавлен ✓') }
+    if (customStatuses.some(s => s.name.toLowerCase() === name.toLowerCase())) return showToast('Такой статус уже есть')
+    let id = slug(name)
+    while (customStatuses.some(s => s.id === id)) id += '_'
+    const next = [...customStatuses, { id, name, color: newStatus.color, category: newStatus.category }]
+    if (await persistStatuses(next)) { setNewStatus({ name:'', color:'#5b6ef5', category:'active' }); showToast('Статус добавлен ✓') }
   }
-  async function delStatus(name) {
-    if (statusCount(name) > 0) return showToast(`Нельзя удалить: есть аккаунты (${statusCount(name)})`)
-    const next = customStatuses.filter(s => s.name !== name)
-    setCustomStatuses(next)
-    if (await saveSettings({ custom_statuses: next })) showToast('Статус удалён')
+  async function updateStatus(id, patch) {
+    const next = customStatuses.map(s => s.id === id ? { ...s, ...patch } : s)
+    await persistStatuses(next)
+  }
+  async function delStatus(s) {
+    if (statusCount(s.name) > 0) return showToast(`Нельзя удалить: есть аккаунты (${statusCount(s.name)})`)
+    if (await persistStatuses(customStatuses.filter(x => x.id !== s.id))) showToast('Статус удалён')
+  }
+  function dropStatus(toIdx) {
+    const from = stDrag
+    setStDrag(null)
+    if (from == null || from === toIdx) return
+    const next = [...customStatuses]
+    const [x] = next.splice(from, 1)
+    next.splice(toIdx, 0, x)
+    persistStatuses(next)
   }
 
-  // ── Группы ──
+  // ── Группы (строго из custom_groups) ──
   async function addGroup() {
     const prefix = newGroup.prefix.trim()
     if (!prefix) return showToast('Введи префикс группы')
-    if ([...BASE_GROUPS, ...customGroups].some(g => g.prefix === prefix)) return showToast('Такая группа уже есть')
+    if (customGroups.some(g => g.prefix.toLowerCase() === prefix.toLowerCase())) return showToast('Такая группа уже есть')
     const next = [...customGroups, { prefix, color: newGroup.color }]
     setCustomGroups(next)
     if (await saveSettings({ custom_groups: next })) { setNewGroup({ prefix:'', color:'#5b6ef5' }); showToast('Группа добавлена ✓') }
@@ -130,9 +138,6 @@ export default function Settings() {
     setWatchdogHours(h)
     if (await saveSettings({ watchdog_hours: h })) showToast('Watchdog сохранён ✓')
   }
-
-  const allStatuses = [...BASE_STATUSES.map(s => ({ ...s, base:true })), ...customStatuses.map(s => ({ ...s, base:false }))]
-  const allGroups = [...BASE_GROUPS.map(g => ({ ...g, base:true })), ...customGroups.map(g => ({ ...g, base:false }))]
 
   return (
     <>
@@ -175,7 +180,21 @@ export default function Settings() {
         .schip .x:hover{color:#f05555}
         .schip.base{opacity:.75}
         .color-inp{width:34px;height:34px;border:1px solid var(--bd);border-radius:6px;background:var(--s2);padding:2px;cursor:pointer}
+        .color-inp.sm{width:28px;height:28px}
         .hint{font-size:11px;color:var(--t3);margin-top:2px}
+        .st-list{display:flex;flex-direction:column;gap:4px}
+        .st-row{display:flex;align-items:center;gap:8px;padding:4px 6px;border:1px solid var(--bd);border-radius:6px;background:var(--s2)}
+        .st-row.drag{opacity:.4}
+        .st-handle{cursor:grab;color:var(--t3);font-size:13px;user-select:none}
+        .st-handle:active{cursor:grabbing}
+        .st-name{flex:1;min-width:80px;background:var(--s1);border:1px solid var(--bd);border-radius:5px;padding:5px 8px;color:var(--t);font-size:13px;outline:none;font-family:'Inter',sans-serif}
+        .st-name:focus{border-color:var(--acc)}
+        .st-cat{background:var(--s1);border:1px solid var(--bd);border-radius:5px;padding:5px 6px;color:var(--t2);font-size:12px;outline:none;cursor:pointer;font-family:'Inter',sans-serif}
+        .st-badge{font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500;white-space:nowrap}
+        .st-cnt{min-width:22px;text-align:center;font-size:11px;color:var(--t3);font-family:'JetBrains Mono',monospace}
+        .st-del{background:none;border:none;color:var(--t3);cursor:pointer;font-size:16px;line-height:1;padding:0 4px}
+        .st-del:hover:not(:disabled){color:#f05555}
+        .st-del:disabled{opacity:.25;cursor:default}
         .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--s3);border:1px solid var(--bd2);border-radius:5px;padding:8px 16px;font-size:12px;color:var(--t);opacity:0;transition:all .2s;z-index:600;pointer-events:none;white-space:nowrap}
         .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
         ::-webkit-scrollbar{width:4px;height:4px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:2px}
@@ -234,37 +253,57 @@ export default function Settings() {
 
         {/* СТАТУСЫ */}
         <div className="card">
-          <h2>🏷 Статусы</h2>
-          <div className="chips">
-            {allStatuses.map(s=>(
-              <span key={s.name} className={`schip${s.base?' base':''}`}>
-                <span className="dot" style={{background:s.color}}/>
-                {s.name}
-                {statusCount(s.name)>0 && <span style={{color:'var(--t3)',fontSize:10}}>· {statusCount(s.name)}</span>}
-                {!s.base && <span className="x" title="Удалить" onClick={()=>delStatus(s.name)}>×</span>}
-              </span>
-            ))}
+          <h2>🏷 Статусы <span style={{fontSize:11,color:'var(--t3)',fontWeight:400}}>· перетаскивай за ⠿</span></h2>
+          <div className="st-list">
+            {customStatuses.length === 0 && <div className="hint">Список пуст — добавь первый статус ниже.</div>}
+            {customStatuses.map((s, i)=>{
+              const used = statusCount(s.name)
+              return (
+                <div key={s.id} className={`st-row${stDrag===i?' drag':''}`}
+                     onDragOver={e=>{e.preventDefault()}}
+                     onDrop={()=>dropStatus(i)}>
+                  <span className="st-handle" draggable onDragStart={()=>setStDrag(i)} onDragEnd={()=>setStDrag(null)}>⠿</span>
+                  <input className="color-inp sm" type="color" value={s.color||'#5b6ef5'} onChange={e=>updateStatus(s.id,{color:e.target.value})}/>
+                  <input className="st-name" value={s.name} onChange={e=>updateStatus(s.id,{name:e.target.value})}/>
+                  <select className="st-cat" value={s.category||'neutral'} onChange={e=>updateStatus(s.id,{category:e.target.value})}>
+                    {CATEGORIES.map(c=><option key={c.k} value={c.k}>{c.l}</option>)}
+                  </select>
+                  <span className="st-badge" style={{background:(CATEGORIES.find(c=>c.k===s.category)?.c||'#6b7280')+'22',color:CATEGORIES.find(c=>c.k===s.category)?.c||'#6b7280'}}>
+                    {CATEGORIES.find(c=>c.k===s.category)?.l||'—'}
+                  </span>
+                  <span className="st-cnt" title="Аккаунтов с этим статусом">{used||0}</span>
+                  <button className="st-del" title={used>0?`Нельзя: есть аккаунты (${used})`:'Удалить'} disabled={used>0} onClick={()=>delStatus(s)}>×</button>
+                </div>
+              )
+            })}
           </div>
-          <div className="row">
+          <div className="row" style={{marginTop:12}}>
             <input className="color-inp" type="color" value={newStatus.color} onChange={e=>setNewStatus({...newStatus,color:e.target.value})}/>
             <div className="fi" style={{flex:1,marginBottom:0}}>
               <label>Новый статус</label>
               <input value={newStatus.name} onChange={e=>setNewStatus({...newStatus,name:e.target.value})} placeholder="Название статуса"/>
             </div>
+            <div className="fi" style={{marginBottom:0}}>
+              <label>Категория</label>
+              <select className="ssel" value={newStatus.category} onChange={e=>setNewStatus({...newStatus,category:e.target.value})}>
+                {CATEGORIES.map(c=><option key={c.k} value={c.k}>{c.l}</option>)}
+              </select>
+            </div>
             <button className="btn btn-acc" onClick={addStatus}>+ Добавить</button>
           </div>
-          <div className="hint">Базовые статусы удалить нельзя. Кастомный — только если нет аккаунтов с ним.</div>
+          <div className="hint">Категория управляет счётчиками панели и заморозкой терминальных. Удалить можно, только если нет аккаунтов с этим статусом.</div>
         </div>
 
         {/* ГРУППЫ */}
         <div className="card">
           <h2>📁 Группы</h2>
           <div className="chips">
-            {allGroups.map(g=>(
-              <span key={g.prefix} className={`schip${g.base?' base':''}`}>
+            {customGroups.length === 0 && <div className="hint">Групп пока нет.</div>}
+            {customGroups.map(g=>(
+              <span key={g.prefix} className="schip">
                 <span className="dot" style={{background:g.color}}/>
                 {g.prefix}
-                {!g.base && <span className="x" title="Удалить" onClick={()=>delGroup(g.prefix)}>×</span>}
+                <span className="x" title="Удалить" onClick={()=>delGroup(g.prefix)}>×</span>
               </span>
             ))}
           </div>
