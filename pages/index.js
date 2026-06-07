@@ -157,6 +157,10 @@ export default function Home() {
   const [catFilter, setCatFilter] = useState(null) // 'active'|'problem'|'terminal'|'no_signal'|null
   const [panelOpen, setPanelOpen] = useState(true)
 
+  // ── Выделение / массовые действия ──
+  const [selectedIds, setSelectedIds] = useState([])
+  const [bulkBar, setBulkBar] = useState({ zalivshik:'', geo:'' })
+
   // ── Инлайн-редактирование ──
   const [editCell, setEditCell] = useState(null) // { id, key, t, opts }
   const [editVal, setEditVal] = useState('')
@@ -366,6 +370,61 @@ export default function Home() {
     } else {
       showToast('Сохранено ✓')
     }
+  }
+
+  // ── Выделение строк + массовые действия ──
+  function toggleSelect(id) {
+    setSelectedIds(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id])
+  }
+  function toggleSelectPage(ids) {
+    const allSel = ids.length > 0 && ids.every(id => selectedIds.includes(id))
+    setSelectedIds(s => allSel ? s.filter(id => !ids.includes(id)) : [...new Set([...s, ...ids])])
+  }
+  function selectAllFiltered(ids) { setSelectedIds(ids) }
+  function clearSelection() { setSelectedIds([]) }
+
+  async function bulkUpdate(changes, { confirm: confirmMsg, label } = {}) {
+    if (selectedIds.length === 0) return
+    if (confirmMsg && !window.confirm(confirmMsg)) return
+    const r = await api('/api/accounts/bulk-update', { method:'POST', body: JSON.stringify({ ids: selectedIds, changes }) })
+    if (r.error) return showToast('Ошибка: ' + r.error)
+    await load()
+    showToast(label || `Обновлено: ${r.updated}`)
+    // (блок 4: r.before — прежние значения для undo)
+  }
+  async function bulkArchive() {
+    await bulkUpdate({ is_archived: true }, { confirm: `Заархивировать ${selectedIds.length} аккаунт(ов)?`, label: 'В архив ✓' })
+    clearSelection()
+  }
+  function copySelected(field, label) {
+    const vals = accounts.filter(a => selectedIds.includes(a.id)).map(a => a[field] || '').filter(Boolean).join('\n')
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(vals)
+    showToast(`Скопировано: ${label}`)
+  }
+  function exportCSV(cols) {
+    const rows = accounts.filter(a => selectedIds.includes(a.id))
+    const esc = (s) => `"${String(s ?? '').replace(/"/g, '""')}"`
+    const metricKeys = { today_cost:'today_cost', yest_cost:'yest_cost', clicks:'clicks', conv:'conv', cpa:'cpa' }
+    const header = cols.map(c => esc(c.label)).join(',')
+    const lines = rows.map(a => {
+      const mt = metricsOf(a, metricsSummary)
+      return cols.map(c => {
+        let v
+        if (c.key in metricKeys) v = mt[metricKeys[c.key]]
+        else if (c.key === 'dis') v = a.dis_reason
+        else v = a[c.key]
+        return esc(v)
+      }).join(',')
+    })
+    const csv = '﻿' + [header, ...lines].join('\n')
+    const blob = new Blob([csv], { type:'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `zalivcrm_export_${new Date().toISOString().slice(0,10)}.csv`
+    link.click()
+    URL.revokeObjectURL(url)
+    showToast(`CSV: ${rows.length} строк`)
   }
 
   function copyText(text, label) {
@@ -736,6 +795,14 @@ export default function Home() {
         .dc-sub{font-size:10px;color:var(--t3);font-weight:400}
         .dash-mini{font-size:12px;color:var(--t2);font-family:'JetBrains Mono',monospace}
         .dash-mini b{color:var(--t);font-weight:500}
+        .bulkbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:7px 14px;border-bottom:1px solid var(--bd);background:rgba(91,110,245,.08);flex-shrink:0}
+        .bb-count{font-size:12px;color:var(--t)}
+        .bb-count b{color:var(--acc)}
+        .bb-sep{width:1px;height:18px;background:var(--bd2)}
+        .bb-inp{background:var(--s2);border:1px solid var(--bd);border-radius:4px;padding:3px 7px;font-size:11px;color:var(--t);outline:none;width:100px;font-family:'Inter',sans-serif}
+        .bb-inp:focus{border-color:var(--acc)}
+        .chk-th,.chk-td{text-align:center;padding:0 4px!important;cursor:default}
+        .chk-th input,.chk-td input{cursor:pointer}
         .fp-row{display:flex;align-items:flex-start;gap:8px}
         .fp-lbl{font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.05em;width:80px;flex-shrink:0;padding-top:4px}
         .chips{display:flex;flex-wrap:wrap;gap:4px}
@@ -1024,6 +1091,32 @@ export default function Home() {
               )}
             </div>
 
+            {/* ПАНЕЛЬ МАССОВЫХ ДЕЙСТВИЙ */}
+            {selectedIds.length > 0 && (
+              <div className="bulkbar">
+                <span className="bb-count">Выбрано <b>{selectedIds.length}</b>{selectedIds.length===filtered.length?' (все по фильтру)':''}</span>
+                {selectedIds.length < filtered.length && (
+                  <button className="btn" onClick={()=>selectAllFiltered(filtered.map(a=>a.id))}>Выделить все по фильтру ({filtered.length})</button>
+                )}
+                <div className="bb-sep"/>
+                <select className="ssel" value="" onChange={e=>{ if(e.target.value){ bulkUpdate({status:e.target.value},{label:'Статус → '+e.target.value}); } }}>
+                  <option value="">Статус всем…</option>
+                  {STATUSES.map(st=><option key={st} value={st}>{st}</option>)}
+                </select>
+                <input className="bb-inp" placeholder="Заливщик…" value={bulkBar.zalivshik} onChange={e=>setBulkBar({...bulkBar,zalivshik:e.target.value})}
+                       onKeyDown={e=>{if(e.key==='Enter'&&bulkBar.zalivshik.trim()){bulkUpdate({zalivshik:bulkBar.zalivshik.trim()},{label:'Заливщик обновлён'});setBulkBar({...bulkBar,zalivshik:''})}}}/>
+                <input className="bb-inp" placeholder="Гео…" value={bulkBar.geo} onChange={e=>setBulkBar({...bulkBar,geo:e.target.value})}
+                       onKeyDown={e=>{if(e.key==='Enter'&&bulkBar.geo.trim()){bulkUpdate({geo:bulkBar.geo.trim()},{label:'Гео обновлено'});setBulkBar({...bulkBar,geo:''})}}}/>
+                <div className="bb-sep"/>
+                <button className="btn" onClick={()=>copySelected('name','названия')}>⎘ Названия</button>
+                <button className="btn" onClick={()=>copySelected('google_ads_id','Google Ads ID')}>⎘ ID</button>
+                <button className="btn" onClick={()=>exportCSV(visibleCols)}>⬇ CSV</button>
+                <div className="bb-sep"/>
+                <button className="btn btn-del" onClick={bulkArchive}>🗄 В архив</button>
+                <button className="btn" style={{marginLeft:'auto'}} onClick={clearSelection}>✕ Снять</button>
+              </div>
+            )}
+
             <div className="tbl-wrap">
               {filtered.length === 0 && !loading ? (
                 accounts.length === 0 ? (
@@ -1062,6 +1155,12 @@ export default function Home() {
               ) : (
                 <table>
                   <thead><tr>
+                    <th className="chk-th" style={{width:32}}>
+                      <input type="checkbox"
+                             checked={pageRows.length>0 && pageRows.every(a=>selectedIds.includes(a.id))}
+                             ref={el=>{ if(el){ const some=pageRows.some(a=>selectedIds.includes(a.id)); const all=pageRows.length>0&&pageRows.every(a=>selectedIds.includes(a.id)); el.indeterminate=some&&!all } }}
+                             onChange={()=>toggleSelectPage(pageRows.map(a=>a.id))}/>
+                    </th>
                     {visibleCols.map(c=>{
                       const over = thOver && thOver.key===c.key
                       const thStyle = {
@@ -1099,6 +1198,9 @@ export default function Home() {
                             onClick={()=>{ if(rowDrag||editCell) return; clearTimeout(openTimer.current); openTimer.current=setTimeout(()=>openDrawer(a),180) }}
                             onDragOver={rowDrag ? (e=>{e.preventDefault();const r=e.currentTarget.getBoundingClientRect();const side=(e.clientY-r.top)<r.height/2?'top':'bottom';if(!rowOver||rowOver.id!==a.id||rowOver.side!==side)setRowOver({id:a.id,side})}) : undefined}
                             onDrop={rowDrag ? (e=>{e.preventDefault();dropRow(a.id)}) : undefined}>
+                          <td className="chk-td" onClick={e=>e.stopPropagation()}>
+                            <input type="checkbox" checked={selectedIds.includes(a.id)} onChange={()=>toggleSelect(a.id)} onClick={e=>e.stopPropagation()}/>
+                          </td>
                           {visibleCols.map(c=>{
                             const isStatus = c.key==='status'
                             const cfg = EDITABLE[c.key]

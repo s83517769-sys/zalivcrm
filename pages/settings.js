@@ -69,6 +69,13 @@ export default function Settings() {
     setRowRules(next)
     await saveSettings({ row_rules: next })
   }
+  // правка порога без сохранения на каждый keystroke
+  function setRuleLocal(id, patch) {
+    setRowRules(rowRules.map(r => r.id === id ? { ...r, ...patch } : r))
+  }
+  async function saveRules() {
+    await saveSettings({ row_rules: rowRules })
+  }
 
   // ── Курсы валют ──
   async function persistRates(next) {
@@ -384,7 +391,10 @@ export default function Settings() {
                 <span className="rule-name">{RULE_LABELS[r.id] || r.field}</span>
                 {RULE_HAS_THRESHOLD[r.id] && (
                   <span className="rule-thr">
-                    <input type="number" value={r.value} onChange={e=>updateRule(r.id,{value:parseFloat(e.target.value)||0})}/>
+                    <input type="number" value={r.value}
+                           onChange={e=>setRuleLocal(r.id,{value:parseFloat(e.target.value)||0})}
+                           onBlur={saveRules}
+                           onKeyDown={e=>{if(e.key==='Enter')e.currentTarget.blur()}}/>
                     <span className="rule-unit">{RULE_HAS_THRESHOLD[r.id]}</span>
                   </span>
                 )}
