@@ -150,6 +150,11 @@ export default function Home() {
   const [metricsSummary, setMetricsSummary] = useState({})
   const [copyPopup, setCopyPopup] = useState(null)
   const [statusDefs, setStatusDefs] = useState(DEFAULT_STATUSES)
+  const [currencyRates, setCurrencyRates] = useState({ USD:1 })
+
+  // ── Сводная панель ──
+  const [catFilter, setCatFilter] = useState(null) // 'active'|'problem'|'terminal'|'no_signal'|null
+  const [panelOpen, setPanelOpen] = useState(true)
 
   // ── Инлайн-редактирование ──
   const [editCell, setEditCell] = useState(null) // { id, key, t, opts }
@@ -220,6 +225,7 @@ export default function Home() {
       if (s.colVisible) setColVisible({ ...defaultVisibleMap(), ...s.colVisible })
       if (s.pageSize) setPageSize(s.pageSize)
       if (s.sort && s.sort.key) setSort(s.sort)
+      if (typeof s.panelOpen === 'boolean') setPanelOpen(s.panelOpen)
     } catch {}
     try {
       const ro = JSON.parse(localStorage.getItem('zcrm_row_order') || '[]')
@@ -235,11 +241,11 @@ export default function Home() {
     if (!loaded.current) return
     localStorage.setItem('zcrm_table_settings', JSON.stringify({
       statusSel, geoSel, zalivSel, groupSel, funnelSel, formatSel,
-      launchFrom, launchTo, colOrder, colVisible, pageSize, sort,
+      launchFrom, launchTo, colOrder, colVisible, pageSize, sort, panelOpen,
     }))
-  }, [statusSel, geoSel, zalivSel, groupSel, funnelSel, formatSel, launchFrom, launchTo, colOrder, colVisible, pageSize, sort])
+  }, [statusSel, geoSel, zalivSel, groupSel, funnelSel, formatSel, launchFrom, launchTo, colOrder, colVisible, pageSize, sort, panelOpen])
 
-  useEffect(() => { setPage(1) }, [statusSel, geoSel, zalivSel, groupSel, funnelSel, formatSel, launchFrom, launchTo, search, pageSize])
+  useEffect(() => { setPage(1) }, [statusSel, geoSel, zalivSel, groupSel, funnelSel, formatSel, launchFrom, launchTo, search, pageSize, catFilter])
 
   function toggleTheme() {
     const n = !dark; setDark(n)
@@ -257,6 +263,9 @@ export default function Home() {
     setMetricsSummary(mData.summary || {})
     if (Array.isArray(sData?.settings?.custom_statuses) && sData.settings.custom_statuses.length) {
       setStatusDefs(sData.settings.custom_statuses)
+    }
+    if (sData?.settings?.currency_rates && Object.keys(sData.settings.currency_rates).length) {
+      setCurrencyRates({ USD:1, ...sData.settings.currency_rates })
     }
     setLoading(false)
     const now = new Date()
@@ -412,6 +421,7 @@ export default function Home() {
   function resetFilters() {
     setStatusSel([]); setGeoSel([]); setZalivSel([]); setGroupSel([])
     setFunnelSel([]); setFormatSel('all'); setLaunchFrom(''); setLaunchTo('')
+    setCatFilter(null)
   }
 
   function toggleSort(key) {
@@ -477,7 +487,10 @@ export default function Home() {
   const funnelOptions = uniq('funnel')
 
   const s = search.toLowerCase()
-  const filtered = accounts.filter(a => {
+  const categoryOf = (status) => statusDefs.find(d => d.name === status)?.category || 'neutral'
+
+  // Базовый набор — все фильтры, КРОМЕ категорийного быстрого фильтра панели
+  const filteredBase = accounts.filter(a => {
     if (search && !SEARCH_FIELDS.some(f => matchField(a, f, s))) return false
     if (statusSel.length && !statusSel.includes(a.status)) return false
     if (geoSel.length && !geoSel.includes(a.geo)) return false
@@ -488,6 +501,12 @@ export default function Home() {
     if (launchFrom && (!a.launch_date || a.launch_date < launchFrom)) return false
     if (launchTo && (!a.launch_date || a.launch_date > launchTo)) return false
     return true
+  })
+
+  const filtered = filteredBase.filter(a => {
+    if (!catFilter) return true
+    if (catFilter === 'no_signal') return a.tech_status === 'НЕТ СВЯЗИ'
+    return categoryOf(a.status) === catFilter
   }).sort((a, b) => {
     if (sort.key === 'custom') {
       const ia = rowOrder.indexOf(a.id), ib = rowOrder.indexOf(b.id)
@@ -502,6 +521,26 @@ export default function Home() {
     else r = String(va).localeCompare(String(vb))
     return sort.dir === 'asc' ? r : -r
   })
+
+  // ── Метрики сводной панели (по базовому набору) ──
+  const rate = (cur) => currencyRates[cur] || 1
+  const panel = (() => {
+    let active = 0, problem = 0, terminal = 0, noSignal = 0, spendToday = 0, spendYest = 0
+    for (const a of filteredBase) {
+      const cat = categoryOf(a.status)
+      if (cat === 'active') active++
+      else if (cat === 'problem') problem++
+      else if (cat === 'terminal') terminal++
+      if (a.tech_status === 'НЕТ СВЯЗИ') noSignal++
+      const m = metricsSummary[a.id]
+      if (m) {
+        const r = rate(m.currency || a.currency || 'USD')
+        spendToday += (+m.today?.cost_usd || 0) * r
+        spendYest += (+m.yesterday?.cost_usd || 0) * r
+      }
+    }
+    return { total: filteredBase.length, active, problem, terminal, noSignal, spendToday, spendYest }
+  })()
 
   const totalPages = pageSize === 'all' ? 1 : Math.max(1, Math.ceil(filtered.length / pageSize))
   const curPage = Math.min(page, totalPages)
@@ -646,6 +685,19 @@ export default function Home() {
         .toolbar{display:flex;align-items:center;gap:6px;padding:7px 14px;border-bottom:1px solid var(--bd);flex-shrink:0;background:var(--s1);flex-wrap:wrap}
         .ssel{background:var(--s2);border:1px solid var(--bd);border-radius:4px;padding:3px 7px;font-size:11px;color:var(--t2);outline:none;cursor:pointer;font-family:'Inter',sans-serif}
         .filters-panel{padding:10px 14px;border-bottom:1px solid var(--bd);background:var(--s1);display:flex;flex-direction:column;gap:8px;flex-shrink:0;max-height:42vh;overflow-y:auto}
+        .dash{display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px solid var(--bd);background:var(--s1);flex-shrink:0}
+        .dash-toggle{background:var(--s2);border:1px solid var(--bd);border-radius:4px;color:var(--t2);cursor:pointer;font-size:12px;padding:2px 7px;flex-shrink:0}
+        .dash-toggle:hover{color:var(--t)}
+        .dash-cards{display:flex;gap:8px;flex-wrap:wrap;flex:1}
+        .dcard{background:var(--s2);border:1px solid var(--bd);border-radius:6px;padding:5px 12px;min-width:90px;cursor:pointer;transition:all .1s}
+        .dcard:hover:not(.no-click){border-color:var(--bd2)}
+        .dcard.act{border-color:var(--acc);background:rgba(91,110,245,.1)}
+        .dcard.no-click{cursor:default}
+        .dc-l{font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
+        .dc-v{font-size:16px;font-weight:500;font-family:'JetBrains Mono',monospace;color:var(--t);margin-top:1px}
+        .dc-sub{font-size:10px;color:var(--t3);font-weight:400}
+        .dash-mini{font-size:12px;color:var(--t2);font-family:'JetBrains Mono',monospace}
+        .dash-mini b{color:var(--t);font-weight:500}
         .fp-row{display:flex;align-items:flex-start;gap:8px}
         .fp-lbl{font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.05em;width:80px;flex-shrink:0;padding-top:4px}
         .chips{display:flex;flex-wrap:wrap;gap:4px}
@@ -898,6 +950,41 @@ export default function Home() {
                 </div>
               </div>
             )}
+
+            {/* СВОДНАЯ ПАНЕЛЬ */}
+            <div className="dash">
+              <button className="dash-toggle" onClick={()=>setPanelOpen(v=>!v)} title={panelOpen?'Свернуть':'Развернуть'}>{panelOpen?'▾':'▸'}</button>
+              {panelOpen ? (
+                <div className="dash-cards">
+                  <div className={`dcard${catFilter===null?' act':''}`} onClick={()=>setCatFilter(null)}>
+                    <div className="dc-l">Всего</div>
+                    <div className="dc-v">{panel.total}<span className="dc-sub"> из {totalAccounts}</span></div>
+                  </div>
+                  <div className={`dcard${catFilter==='active'?' act':''}`} onClick={()=>setCatFilter(c=>c==='active'?null:'active')}>
+                    <div className="dc-l">Актив</div><div className="dc-v" style={{color:'#22d17a'}}>{panel.active}</div>
+                  </div>
+                  <div className={`dcard${catFilter==='problem'?' act':''}`} onClick={()=>setCatFilter(c=>c==='problem'?null:'problem')}>
+                    <div className="dc-l">Проблема</div><div className="dc-v" style={{color:'#f5a623'}}>{panel.problem}</div>
+                  </div>
+                  <div className={`dcard${catFilter==='terminal'?' act':''}`} onClick={()=>setCatFilter(c=>c==='terminal'?null:'terminal')}>
+                    <div className="dc-l">Терминал</div><div className="dc-v" style={{color:'#f05555'}}>{panel.terminal}</div>
+                  </div>
+                  <div className={`dcard${catFilter==='no_signal'?' act':''}`} onClick={()=>setCatFilter(c=>c==='no_signal'?null:'no_signal')}>
+                    <div className="dc-l">НЕТ СВЯЗИ</div><div className="dc-v" style={{color:panel.noSignal>0?'#f05555':'var(--t3)'}}>{panel.noSignal}</div>
+                  </div>
+                  <div className="dcard no-click">
+                    <div className="dc-l">Спенд сегодня</div><div className="dc-v" style={{color:'#22d17a'}}>{panel.spendToday>0?'$'+Math.round(panel.spendToday).toLocaleString('ru'):'—'}</div>
+                  </div>
+                  <div className="dcard no-click">
+                    <div className="dc-l">Спенд вчера</div><div className="dc-v">{panel.spendYest>0?'$'+Math.round(panel.spendYest).toLocaleString('ru'):'—'}</div>
+                  </div>
+                </div>
+              ) : (
+                <div className="dash-mini">
+                  Всего <b>{panel.total}</b> · <span style={{color:'#22d17a'}}>{panel.active}</span> · <span style={{color:'#f5a623'}}>{panel.problem}</span> · <span style={{color:'#f05555'}}>{panel.terminal}</span> · НЕТ СВЯЗИ <b style={{color:panel.noSignal>0?'#f05555':'inherit'}}>{panel.noSignal}</b> · сегодня <b style={{color:'#22d17a'}}>{panel.spendToday>0?'$'+Math.round(panel.spendToday).toLocaleString('ru'):'—'}</b>
+                </div>
+              )}
+            </div>
 
             <div className="tbl-wrap">
               {filtered.length === 0 && !loading ? (
