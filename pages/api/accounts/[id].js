@@ -63,17 +63,9 @@ export default async function handler(req, res) {
       })
     }
 
-    // Автоматизация: заполнили причину бана → дата бана + статус "На смену"
+    // Автоматизация: заполнили причину бана → только автодата бана (status НЕ трогаем)
     if (autos.ban_reason_to_na_smenu && body.ban_reason && body.ban_reason !== current.ban_reason) {
       if (!current.ban_date && !body.ban_date) body.ban_date = today
-      if (!body.status && !terminalNames.includes(current.status)) {
-        body.status = 'На смену'
-        await supabaseAdmin.from('account_history').insert({
-          account_id: id, user_id: USER_ID, field_name: 'status',
-          old_value: current.status, new_value: 'На смену',
-          note: 'Авто: заполнена причина бана',
-        })
-      }
     }
 
     // Логируем изменение дизапрува
