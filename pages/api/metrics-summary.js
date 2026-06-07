@@ -16,10 +16,17 @@ export default async function handler(req, res) {
 
   if (error) return res.status(500).json({ error: error.message })
 
+  // Валюта каждого аккаунта (cost_usd хранит НАТИВНУЮ валюту, нормализация — на клиенте)
+  const { data: accs } = await supabaseAdmin
+    .from('accounts')
+    .select('id, currency')
+    .eq('user_id', USER_ID)
+  const curMap = Object.fromEntries((accs || []).map(a => [a.id, a.currency || 'USD']))
+
   // Группируем по account_id
   const summary = {}
   for (const row of (data || [])) {
-    if (!summary[row.account_id]) summary[row.account_id] = {}
+    if (!summary[row.account_id]) summary[row.account_id] = { currency: curMap[row.account_id] || 'USD' }
     if (row.metric_date === today) {
       summary[row.account_id].today = row
     } else {
