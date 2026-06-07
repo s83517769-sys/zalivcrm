@@ -22,6 +22,16 @@ function groupOf(name) {
   return 'OTHER'
 }
 
+// Поля, редактируемые инлайн (двойной клик по ячейке). combo = input + datalist
+const EDITABLE = {
+  name:{ t:'text' }, google_ads_id:{ t:'text' },
+  geo:{ t:'combo' }, funnel:{ t:'combo' }, creo:{ t:'combo' }, card:{ t:'combo' },
+  zalivshik:{ t:'combo' }, google_tag:{ t:'text' }, comment:{ t:'text' },
+  format:{ t:'select', opts:['Фото','Видео'] },
+  launch_date:{ t:'date' }, crut_date:{ t:'date' }, ban_date:{ t:'date' },
+}
+const COMBO_FIELDS = ['geo','funnel','creo','card','zalivshik']
+
 // Реестр всех колонок таблицы
 const ALL_COLUMNS = [
   { key:'name',       label:'Аккаунт',    width:150, align:'l' },
@@ -140,6 +150,11 @@ export default function Home() {
   const [metricsSummary, setMetricsSummary] = useState({})
   const [copyPopup, setCopyPopup] = useState(null)
   const [statusDefs, setStatusDefs] = useState(DEFAULT_STATUSES)
+
+  // ── Инлайн-редактирование ──
+  const [editCell, setEditCell] = useState(null) // { id, key, t, opts }
+  const [editVal, setEditVal] = useState('')
+  const openTimer = useRef(null)
 
   // Статусы из настроек пользователя (custom_statuses)
   const STATUSES = statusDefs.map(s => s.name)
@@ -306,6 +321,38 @@ export default function Home() {
   function showToast(msg) {
     setToast(msg)
     setTimeout(() => setToast(''), 2200)
+  }
+
+  // ── Инлайн-редактирование ячеек ──
+  function distinctVals(key) {
+    return [...new Set(accounts.map(x => x[key]).filter(v => v != null && String(v).trim() !== ''))]
+      .sort((a, b) => String(a).localeCompare(String(b)))
+  }
+  function startEdit(a, key) {
+    const cfg = EDITABLE[key]
+    if (!cfg) return
+    setEditCell({ id: a.id, key, t: cfg.t, opts: cfg.opts })
+    setEditVal(a[key] == null ? '' : String(a[key]))
+  }
+  function cancelEdit() { setEditCell(null); setEditVal('') }
+  async function commitEdit() {
+    if (!editCell) return
+    const { id, key } = editCell
+    setEditCell(null)
+    const acc = accounts.find(x => x.id === id)
+    if (!acc) return
+    const prev = acc[key]
+    const nextVal = editVal === '' ? null : editVal
+    if (String(prev ?? '') === String(nextVal ?? '')) return // не изменилось
+    // оптимистично
+    setAccounts(list => list.map(x => x.id === id ? { ...x, [key]: nextVal } : x))
+    const r = await api(`/api/accounts/${id}`, { method: 'PATCH', body: JSON.stringify({ [key]: nextVal }) })
+    if (r && r.error) {
+      setAccounts(list => list.map(x => x.id === id ? { ...x, [key]: prev } : x)) // откат
+      showToast('Ошибка: ' + r.error)
+    } else {
+      showToast('Сохранено ✓')
+    }
   }
 
   function copyText(text, label) {
@@ -622,6 +669,7 @@ export default function Home() {
         .badge{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:3px;font-size:10px;font-weight:500;font-family:'JetBrains Mono',monospace;cursor:pointer;white-space:nowrap}
         .badge-dot{width:5px;height:5px;border-radius:50%;flex-shrink:0}
         .cell-sm{font-size:11px;color:var(--t2);max-width:120px;overflow:hidden;text-overflow:ellipsis;display:inline-block}
+        .cell-edit{width:100%;background:var(--s1);border:1px solid var(--acc);border-radius:4px;padding:3px 6px;color:var(--t);font-size:12px;font-family:'Inter',sans-serif;outline:none}
         .cell-sm.muted{color:var(--t3)}
         .frozen-row td{opacity:.6}
         .pager{display:flex;align-items:center;gap:6px;margin-left:auto;font-size:11px;color:var(--t3)}
@@ -920,15 +968,33 @@ export default function Home() {
                       }
                       return (
                         <tr key={a.id} className={a.is_frozen?'frozen-row':''} style={trStyle}
-                            onClick={()=>openDrawer(a)}
+                            onClick={()=>{ if(rowDrag||editCell) return; clearTimeout(openTimer.current); openTimer.current=setTimeout(()=>openDrawer(a),180) }}
                             onDragOver={rowDrag ? (e=>{e.preventDefault();const r=e.currentTarget.getBoundingClientRect();const side=(e.clientY-r.top)<r.height/2?'top':'bottom';if(!rowOver||rowOver.id!==a.id||rowOver.side!==side)setRowOver({id:a.id,side})}) : undefined}
                             onDrop={rowDrag ? (e=>{e.preventDefault();dropRow(a.id)}) : undefined}>
                           {visibleCols.map(c=>{
                             const isStatus = c.key==='status'
+                            const cfg = EDITABLE[c.key]
+                            const editing = editCell && editCell.id===a.id && editCell.key===c.key
                             return (
                               <td key={c.key} className={c.align==='r'?'r':undefined}
-                                  onClick={isStatus ? (e=>{e.stopPropagation();setStatusPopup({id:a.id,x:e.clientX,y:e.clientY})}) : undefined}>
-                                {cellContent(c.key, a, mt)}
+                                  onClick={isStatus ? (e=>{e.stopPropagation();setStatusPopup({id:a.id,x:e.clientX,y:e.clientY})}) : undefined}
+                                  onDoubleClick={cfg && !isStatus ? (e=>{e.stopPropagation();clearTimeout(openTimer.current);startEdit(a,c.key)}) : undefined}>
+                                {editing ? (
+                                  cfg.t==='select' ? (
+                                    <select autoFocus className="cell-edit" value={editVal}
+                                            onChange={e=>setEditVal(e.target.value)} onBlur={commitEdit}
+                                            onKeyDown={e=>{if(e.key==='Enter')commitEdit();if(e.key==='Escape')cancelEdit()}}
+                                            onClick={e=>e.stopPropagation()}>
+                                      {cfg.opts.map(o=><option key={o}>{o}</option>)}
+                                    </select>
+                                  ) : (
+                                    <input autoFocus className="cell-edit" type={cfg.t==='date'?'date':'text'} value={editVal}
+                                           list={cfg.t==='combo'?`dl-${c.key}`:undefined}
+                                           onChange={e=>setEditVal(e.target.value)} onBlur={commitEdit}
+                                           onKeyDown={e=>{if(e.key==='Enter')commitEdit();if(e.key==='Escape'){e.preventDefault();cancelEdit()}}}
+                                           onClick={e=>e.stopPropagation()} onDoubleClick={e=>e.stopPropagation()}/>
+                                  )
+                                ) : cellContent(c.key, a, mt)}
                               </td>
                             )
                           })}
@@ -1067,7 +1133,12 @@ export default function Home() {
                   <div className="dr-grid">
                     <div className="fi"><label>Дата</label><input value={editForm.dis_date||''} onChange={e=>setEditForm({...editForm,dis_date:e.target.value})} placeholder="дд.мм.гг"/></div>
                     <div className="fi"><label>Решение</label><input value={editForm.dis_solution||''} onChange={e=>setEditForm({...editForm,dis_solution:e.target.value})}/></div>
-                    <div className="fi fi-full"><label>Причина</label><textarea value={editForm.dis_reason||''} onChange={e=>setEditForm({...editForm,dis_reason:e.target.value})}/></div>
+                    <div className="fi fi-full"><label>Причина</label><input list="dl-dis_reason" value={editForm.dis_reason||''} onChange={e=>setEditForm({...editForm,dis_reason:e.target.value})} placeholder="выбери или впиши"/></div>
+                  </div>
+
+                  <div className="dr-sec">Бан</div>
+                  <div className="dr-grid">
+                    <div className="fi fi-full"><label>Причина бана</label><input list="dl-ban_reason" value={editForm.ban_reason||''} onChange={e=>setEditForm({...editForm,ban_reason:e.target.value})} placeholder="выбери или впиши"/></div>
                   </div>
 
                   <div className="dr-sec">Даты</div>
@@ -1223,6 +1294,15 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      {/* DATALISTS для combobox-ячеек и причин */}
+      {COMBO_FIELDS.map(k => (
+        <datalist key={k} id={`dl-${k}`}>
+          {distinctVals(k).map(v => <option key={v} value={v}/>)}
+        </datalist>
+      ))}
+      <datalist id="dl-dis_reason">{distinctVals('dis_reason').map(v => <option key={v} value={v}/>)}</datalist>
+      <datalist id="dl-ban_reason">{distinctVals('ban_reason').map(v => <option key={v} value={v}/>)}</datalist>
 
       <div className={`toast${toast?' show':''}`}>{toast}</div>
     </>

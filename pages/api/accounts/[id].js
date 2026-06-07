@@ -87,6 +87,16 @@ export default async function handler(req, res) {
       })
     }
 
+    // Общий лог изменений прочих полей (status и dis_reason логируются выше)
+    const TRACKED = ['name','google_ads_id','geo','zalivshik','funnel','creo','card','google_tag','format','launch_date','crut_date','ban_date','ban_reason','comment']
+    const histRows = []
+    for (const f of TRACKED) {
+      if (f in body && body[f] !== current[f] && String(current[f] ?? '') !== String(body[f] ?? '')) {
+        histRows.push({ account_id: id, user_id: USER_ID, field_name: f, old_value: current[f] != null ? String(current[f]) : null, new_value: body[f] != null ? String(body[f]) : null })
+      }
+    }
+    if (histRows.length) await supabaseAdmin.from('account_history').insert(histRows)
+
     // metrics_manual_override: ручная правка метрики закрепляет поле от перезаписи скриптом
     if ('metrics_manual_override' in current) {
       const overridden = Array.isArray(current.metrics_manual_override) ? [...current.metrics_manual_override] : []
