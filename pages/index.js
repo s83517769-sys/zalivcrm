@@ -3,7 +3,7 @@ import Head from 'next/head'
 import Link from 'next/link'
 import { api } from '../lib/api'
 import { useAuth } from '../lib/useAuth'
-import { DEFAULT_STATUSES } from '../lib/defaults'
+import { DEFAULT_STATUSES, DEFAULT_ROW_RULES } from '../lib/defaults'
 
 // hex → rgba с прозрачностью (для фона бейджа)
 function hexBg(hex, a = 0.13) {
@@ -151,6 +151,7 @@ export default function Home() {
   const [copyPopup, setCopyPopup] = useState(null)
   const [statusDefs, setStatusDefs] = useState(DEFAULT_STATUSES)
   const [currencyRates, setCurrencyRates] = useState({ USD:1 })
+  const [rowRules, setRowRules] = useState(DEFAULT_ROW_RULES)
 
   // ── Сводная панель ──
   const [catFilter, setCatFilter] = useState(null) // 'active'|'problem'|'terminal'|'no_signal'|null
@@ -266,6 +267,9 @@ export default function Home() {
     }
     if (sData?.settings?.currency_rates && Object.keys(sData.settings.currency_rates).length) {
       setCurrencyRates({ USD:1, ...sData.settings.currency_rates })
+    }
+    if (Array.isArray(sData?.settings?.row_rules)) {
+      setRowRules(sData.settings.row_rules)
     }
     setLoading(false)
     const now = new Date()
@@ -542,6 +546,40 @@ export default function Home() {
     return { total: filteredBase.length, active, problem, terminal, noSignal, spendToday, spendYest }
   })()
 
+  // ── Правила подсветки строк (row_rules) ──
+  function ruleHits(a) {
+    const m = metricsSummary[a.id] || {}
+    const t = m.today || {}, y = m.yesterday || {}
+    const v = {
+      tech_status: a.tech_status,
+      today_cost: +t.cost_usd || 0,
+      today_conv: +t.conversions || 0,
+      cpa: +t.cpa || 0,
+      today_cpc: +t.cpc_usd || 0,
+      yest_cpc: +y.cpc_usd || 0,
+    }
+    const matches = (r) => {
+      switch (r.field) {
+        case 'tech_status':   return v.tech_status === (r.value || 'НЕТ СВЯЗИ')
+        case 'spend_no_conv': return v.today_cost > 0 && v.today_conv === 0
+        case 'cpa':           return v.cpa > (+r.value || 70)
+        case 'cpc_jump_pct':  return v.yest_cpc > 0 && ((v.today_cpc - v.yest_cpc) / v.yest_cpc * 100) > (+r.value || 50)
+        default: return false
+      }
+    }
+    let stripe = null
+    const cellColor = {}
+    for (const r of rowRules) {
+      if (r.enabled === false) continue
+      if (!matches(r)) continue
+      // CPA-правило красит только ячейку CPA, не полосу
+      if (r.field === 'cpa') { if (!cellColor.cpa) cellColor.cpa = r.color; continue }
+      // остальные (НЕТ СВЯЗИ / спенд без конверсий / скачок CPC) — полоса слева, первое по приоритету
+      if (!stripe) stripe = r.color
+    }
+    return { stripe, cellColor }
+  }
+
   const totalPages = pageSize === 'all' ? 1 : Math.max(1, Math.ceil(filtered.length / pageSize))
   const curPage = Math.min(page, totalPages)
   const pageRows = pageSize === 'all' ? filtered : filtered.slice((curPage-1)*pageSize, curPage*pageSize)
@@ -565,7 +603,7 @@ export default function Home() {
 
   const visibleCols = colOrder.map(k => COLMAP[k]).filter(c => c && colVisible[c.key])
 
-  function cellContent(key, a, mt) {
+  function cellContent(key, a, mt, marks) {
     switch (key) {
       case 'name': return (
         <div className="name-cell">
@@ -619,7 +657,7 @@ export default function Home() {
       case 'yest_cost': return <span style={{color:mt.yest_cost>0?'var(--t2)':'var(--t3)'}}>{money(mt.yest_cost)}</span>
       case 'clicks': return <span style={{color:mt.clicks>0?'var(--t)':'var(--t3)'}}>{mt.clicks||'—'}</span>
       case 'conv': return <span style={{color:mt.conv>0?'#f5a623':'var(--t3)'}}>{mt.conv||'—'}</span>
-      case 'cpa': return <span style={{color:mt.cpa>70?'#f05555':mt.cpa>0?'#22d17a':'var(--t3)'}}>{money(mt.cpa)}</span>
+      case 'cpa': return <span style={{color: marks?.cellColor?.cpa || (mt.cpa>0?'#22d17a':'var(--t3)')}}>{money(mt.cpa)}</span>
       case 'dis': return a.dis_reason ? (
         <div>
           <div className="cell-sm" style={{color:'#f5a623'}}>{a.dis_date||''}</div>
@@ -1048,10 +1086,13 @@ export default function Home() {
                   <tbody>
                     {pageRows.map(a => {
                       const mt = metricsOf(a, metricsSummary)
+                      const marks = ruleHits(a)
                       const rOver = rowOver && rowOver.id===a.id
                       const trStyle = {
                         opacity: rowDrag===a.id ? 0.4 : undefined,
-                        boxShadow: rOver ? (rowOver.side==='top' ? 'inset 0 2px 0 var(--acc)' : 'inset 0 -2px 0 var(--acc)') : undefined,
+                        boxShadow: rOver
+                          ? (rowOver.side==='top' ? 'inset 0 2px 0 var(--acc)' : 'inset 0 -2px 0 var(--acc)')
+                          : (marks.stripe ? `inset 3px 0 0 ${marks.stripe}` : undefined),
                       }
                       return (
                         <tr key={a.id} className={a.is_frozen?'frozen-row':''} style={trStyle}
@@ -1081,7 +1122,7 @@ export default function Home() {
                                            onKeyDown={e=>{if(e.key==='Enter')commitEdit();if(e.key==='Escape'){e.preventDefault();cancelEdit()}}}
                                            onClick={e=>e.stopPropagation()} onDoubleClick={e=>e.stopPropagation()}/>
                                   )
-                                ) : cellContent(c.key, a, mt)}
+                                ) : cellContent(c.key, a, mt, marks)}
                               </td>
                             )
                           })}
