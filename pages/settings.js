@@ -25,6 +25,9 @@ export default function Settings() {
   const [customStatuses, setCustomStatuses] = useState([])
   const [customGroups, setCustomGroups] = useState([])
   const [watchdogHours, setWatchdogHours] = useState(2)
+  const [rowRules, setRowRules] = useState([])
+  const [rates, setRates] = useState({ USD:1 })
+  const [newRate, setNewRate] = useState({ cur:'', val:'' })
 
   const [newStatus, setNewStatus] = useState({ name:'', color:'#5b6ef5', category:'active' })
   const [newGroup, setNewGroup] = useState({ prefix:'', color:'#5b6ef5' })
@@ -49,8 +52,45 @@ export default function Settings() {
       setCustomStatuses(s.settings.custom_statuses || [])
       setCustomGroups(s.settings.custom_groups || [])
       setWatchdogHours(s.settings.watchdog_hours ?? 2)
+      setRowRules(s.settings.row_rules || [])
+      setRates({ USD:1, ...(s.settings.currency_rates || {}) })
     }
     setAccounts(a.accounts || [])
+  }
+
+  // ── Правила подсветки ──
+  const RULE_LABELS = {
+    no_signal:'НЕТ СВЯЗИ (tech_status)', spend_no_conv:'Спенд > 0, но 0 конверсий',
+    cpa_high:'CPA выше порога', cpc_jump:'Скачок CPC сегодня к вчера',
+  }
+  const RULE_HAS_THRESHOLD = { cpa_high:'$', cpc_jump:'%' }
+  async function updateRule(id, patch) {
+    const next = rowRules.map(r => r.id === id ? { ...r, ...patch } : r)
+    setRowRules(next)
+    await saveSettings({ row_rules: next })
+  }
+
+  // ── Курсы валют ──
+  async function persistRates(next) {
+    setRates(next)
+    return saveSettings({ currency_rates: next })
+  }
+  async function updateRate(cur, val) {
+    const next = { ...rates, [cur]: parseFloat(val) || 0 }
+    await persistRates(next)
+  }
+  async function addRate() {
+    const cur = newRate.cur.trim().toUpperCase()
+    const val = parseFloat(newRate.val)
+    if (!cur) return showToast('Введи код валюты')
+    if (rates[cur] !== undefined) return showToast('Такая валюта уже есть')
+    if (!val || val <= 0) return showToast('Введи курс к USD')
+    if (await persistRates({ ...rates, [cur]: val })) { setNewRate({ cur:'', val:'' }); showToast('Валюта добавлена ✓') }
+  }
+  async function delRate(cur) {
+    if (cur === 'USD') return showToast('USD удалить нельзя')
+    const next = { ...rates }; delete next[cur]
+    if (await persistRates(next)) showToast('Валюта удалена')
   }
 
   function showToast(msg) { setToast(msg); setTimeout(() => setToast(''), 2200) }
@@ -195,6 +235,17 @@ export default function Settings() {
         .st-del{background:none;border:none;color:var(--t3);cursor:pointer;font-size:16px;line-height:1;padding:0 4px}
         .st-del:hover:not(:disabled){color:#f05555}
         .st-del:disabled{opacity:.25;cursor:default}
+        .rule-toggle{display:flex;align-items:center}
+        .rule-name{flex:1;font-size:13px;color:var(--t)}
+        .rule-thr{display:flex;align-items:center;gap:4px}
+        .rule-thr input{width:64px;background:var(--s1);border:1px solid var(--bd);border-radius:5px;padding:5px 7px;color:var(--t);font-size:12px;outline:none;font-family:'JetBrains Mono',monospace}
+        .rule-thr input:focus{border-color:var(--acc)}
+        .rule-unit{font-size:12px;color:var(--t3)}
+        .rate-cur{width:48px;font-family:'JetBrains Mono',monospace;font-weight:500;font-size:13px;color:var(--t)}
+        .rate-val{width:110px;background:var(--s1);border:1px solid var(--bd);border-radius:5px;padding:5px 8px;color:var(--t);font-size:13px;font-family:'JetBrains Mono',monospace;outline:none}
+        .rate-val:focus{border-color:var(--acc)}
+        .rate-val:disabled{opacity:.5}
+        .rate-eq{flex:1;font-size:11px;color:var(--t3)}
         .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--s3);border:1px solid var(--bd2);border-radius:5px;padding:8px 16px;font-size:12px;color:var(--t);opacity:0;transition:all .2s;z-index:600;pointer-events:none;white-space:nowrap}
         .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
         ::-webkit-scrollbar{width:4px;height:4px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:2px}
@@ -316,6 +367,59 @@ export default function Settings() {
             <button className="btn btn-acc" onClick={addGroup}>+ Добавить</button>
           </div>
           <div className="hint">Группа определяется по префиксу названия аккаунта.</div>
+        </div>
+
+        {/* ПРАВИЛА ПОДСВЕТКИ */}
+        <div className="card">
+          <h2>🎨 Подсветка строк</h2>
+          <div className="hint" style={{marginBottom:10}}>Сработавшее правило красит левую полосу строки (приоритет — сверху вниз). CPA-правило красит ячейку CPA.</div>
+          <div className="st-list">
+            {rowRules.length === 0 && <div className="hint">Правил нет.</div>}
+            {rowRules.map(r=>(
+              <div key={r.id} className="st-row">
+                <label className="rule-toggle" title={r.enabled===false?'Выключено':'Включено'}>
+                  <input type="checkbox" checked={r.enabled!==false} onChange={e=>updateRule(r.id,{enabled:e.target.checked})}/>
+                </label>
+                <input className="color-inp sm" type="color" value={r.color||'#f5a623'} onChange={e=>updateRule(r.id,{color:e.target.value})}/>
+                <span className="rule-name">{RULE_LABELS[r.id] || r.field}</span>
+                {RULE_HAS_THRESHOLD[r.id] && (
+                  <span className="rule-thr">
+                    <input type="number" value={r.value} onChange={e=>updateRule(r.id,{value:parseFloat(e.target.value)||0})}/>
+                    <span className="rule-unit">{RULE_HAS_THRESHOLD[r.id]}</span>
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* КУРСЫ ВАЛЮТ */}
+        <div className="card">
+          <h2>💱 Курсы валют к USD</h2>
+          <div className="hint" style={{marginBottom:10}}>Спенд в панели аккаунтов нормализуется в USD: нативная сумма × курс. USD всегда 1.</div>
+          <div className="st-list">
+            {Object.entries(rates).sort((a,b)=>a[0].localeCompare(b[0])).map(([cur,val])=>(
+              <div key={cur} className="st-row">
+                <span className="rate-cur">{cur}</span>
+                <input className="rate-val" type="number" step="0.0001" value={val} disabled={cur==='USD'}
+                       onChange={e=>setRates({...rates,[cur]:e.target.value})}
+                       onBlur={e=>cur!=='USD' && updateRate(cur,e.target.value)}/>
+                <span className="rate-eq">× нативная = USD</span>
+                <button className="st-del" title={cur==='USD'?'USD удалить нельзя':'Удалить'} disabled={cur==='USD'} onClick={()=>delRate(cur)}>×</button>
+              </div>
+            ))}
+          </div>
+          <div className="row" style={{marginTop:12}}>
+            <div className="fi" style={{maxWidth:110,marginBottom:0}}>
+              <label>Валюта</label>
+              <input value={newRate.cur} onChange={e=>setNewRate({...newRate,cur:e.target.value})} placeholder="напр. CAD"/>
+            </div>
+            <div className="fi" style={{maxWidth:130,marginBottom:0}}>
+              <label>Курс к USD</label>
+              <input type="number" step="0.0001" value={newRate.val} onChange={e=>setNewRate({...newRate,val:e.target.value})} placeholder="0.74"/>
+            </div>
+            <button className="btn btn-acc" onClick={addRate}>+ Добавить</button>
+          </div>
         </div>
 
         {/* WATCHDOG */}
