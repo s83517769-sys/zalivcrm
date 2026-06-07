@@ -11,6 +11,9 @@ export default async function handler(req, res) {
 
   if (req.method === 'PATCH') {
     const body = { ...req.body }
+    // Пустые строки → null (иначе date/числовые колонки падают на '' → 500).
+    // Делаем до автоматизаций и истории, чтобы очистка поля давала чистый null.
+    Object.keys(body).forEach(k => { if (body[k] === '') body[k] = null })
     const now = new Date()
     const today = now.toISOString().split('T')[0]
 
