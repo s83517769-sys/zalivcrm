@@ -414,7 +414,11 @@ export default function Home() {
   }
   async function applyBulk(ids, changes) {
     await api('/api/accounts/bulk-update', { method:'POST', body: JSON.stringify({ ids, changes }) })
-    await load()
+    if ('is_archived' in changes && changes.is_archived) {
+      setAccounts(list => list.filter(a => !ids.includes(a.id)))
+    } else {
+      setAccounts(list => list.map(a => ids.includes(a.id) ? { ...a, ...changes } : a))
+    }
   }
   async function doUndo() {
     const a = undoRef.current.pop()
@@ -485,7 +489,12 @@ export default function Home() {
     const ids = [...selectedIds]
     const r = await api('/api/accounts/bulk-update', { method:'POST', body: JSON.stringify({ ids, changes }) })
     if (r.error) return showToast('Ошибка: ' + r.error)
-    await load()
+    // Точечное обновление без полного reload (без оверлея «Загрузка…»)
+    if ('is_archived' in changes && changes.is_archived) {
+      setAccounts(list => list.filter(a => !ids.includes(a.id)))
+    } else {
+      setAccounts(list => list.map(a => ids.includes(a.id) ? { ...a, ...changes } : a))
+    }
     if (Array.isArray(r.before) && r.before.length) {
       pushAction({
         label: label || 'массовое',
