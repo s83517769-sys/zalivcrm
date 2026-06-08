@@ -385,11 +385,20 @@ export default function Home() {
     await api(`/api/accounts/${id}`, { method:'PATCH', body: JSON.stringify(fields) })
   }
   async function applyRestore(before) {
+    let needsReload = false
     for (const row of before) {
       const { id, ...fields } = row
+      if ('is_archived' in fields) needsReload = true // меняется членство в списке → рефетч
       await api(`/api/accounts/${id}`, { method:'PATCH', body: JSON.stringify(fields) })
     }
-    await load()
+    if (needsReload) { await load(); return }
+    // точечное обновление строк без полного рефетча
+    setAccounts(list => list.map(x => {
+      const r = before.find(b => b.id === x.id)
+      if (!r) return x
+      const { id, ...fields } = r
+      return { ...x, ...fields }
+    }))
   }
   async function applyBulk(ids, changes) {
     await api('/api/accounts/bulk-update', { method:'POST', body: JSON.stringify({ ids, changes }) })
@@ -1417,7 +1426,7 @@ export default function Home() {
             <div className="dr-body">
               {drawerTab === 'info' && (
                 <>
-                  <div className="dr-sec">Основное</div>
+                  <div className="dr-sec">Идентификация</div>
                   <div className="dr-grid">
                     <div className="fi"><label>Название</label><input value={editForm.name||''} onChange={e=>setEditForm({...editForm,name:e.target.value})}/></div>
                     <div className="fi"><label>Google Ads ID</label><input value={editForm.google_ads_id||''} onChange={e=>setEditForm({...editForm,google_ads_id:e.target.value})}/></div>
@@ -1428,6 +1437,16 @@ export default function Home() {
                       </select>
                     </div>
                     <div className="fi"><label>Заливщик</label><input value={editForm.zalivshik||''} onChange={e=>setEditForm({...editForm,zalivshik:e.target.value})}/></div>
+                    <div className="fi"><label>Карта</label><input value={editForm.card||''} onChange={e=>setEditForm({...editForm,card:e.target.value})}/></div>
+                    <div className="fi"><label>Валюта</label>
+                      <select value={editForm.currency||'USD'} onChange={e=>setEditForm({...editForm,currency:e.target.value})}>
+                        <option>USD</option><option>EUR</option><option>AUD</option><option>GBP</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="dr-sec">Запуск</div>
+                  <div className="dr-grid">
                     <div className="fi"><label>Гео</label><input value={editForm.geo||''} onChange={e=>setEditForm({...editForm,geo:e.target.value})}/></div>
                     <div className="fi"><label>Интересы</label><input value={editForm.interests||''} onChange={e=>setEditForm({...editForm,interests:e.target.value})}/></div>
                     <div className="fi"><label>Воронка</label><input value={editForm.funnel||''} onChange={e=>setEditForm({...editForm,funnel:e.target.value})}/></div>
@@ -1438,12 +1457,6 @@ export default function Home() {
                     </div>
                     <div className="fi"><label>Крео</label><input value={editForm.creo||''} onChange={e=>setEditForm({...editForm,creo:e.target.value})}/></div>
                     <div className="fi"><label>Текста</label><input value={editForm.txt_variant||''} onChange={e=>setEditForm({...editForm,txt_variant:e.target.value})}/></div>
-                    <div className="fi"><label>Карта</label><input value={editForm.card||''} onChange={e=>setEditForm({...editForm,card:e.target.value})}/></div>
-                    <div className="fi"><label>Валюта</label>
-                      <select value={editForm.currency||'USD'} onChange={e=>setEditForm({...editForm,currency:e.target.value})}>
-                        <option>USD</option><option>EUR</option><option>AUD</option><option>GBP</option>
-                      </select>
-                    </div>
                   </div>
 
                   <div className="dr-sec">Ссылки</div>
@@ -1655,27 +1668,65 @@ export default function Home() {
 function MetricsTab({ accountId, metrics, onAdd, onRefresh }) {
   const today = new Date().toISOString().split('T')[0]
   const [row, setRow] = useState({ metric_date: today, clicks:'', cpc_local:'', cpc_usd:'', cost_usd:'', conversions:'' })
+  const [period, setPeriod] = useState('30')
 
-  const totalCost = metrics.reduce((s,m)=>s+(+m.cost_usd||0),0)
-  const totalClicks = metrics.reduce((s,m)=>s+(+m.clicks||0),0)
-  const totalConv = metrics.reduce((s,m)=>s+(+m.conversions||0),0)
+  const sortedAsc = [...metrics].sort((a,b)=> a.metric_date < b.metric_date ? -1 : 1)
+  const n = period==='7' ? 7 : period==='30' ? 30 : sortedAsc.length
+  const view = sortedAsc.slice(-n)
+  const viewDesc = [...view].reverse()
+
+  const totalCost = view.reduce((s,m)=>s+(+m.cost_usd||0),0)
+  const totalClicks = view.reduce((s,m)=>s+(+m.clicks||0),0)
+  const totalConv = view.reduce((s,m)=>s+(+m.conversions||0),0)
   const avgCpc = totalClicks > 0 ? totalCost / totalClicks : 0
+
+  // SVG-график: спенд столбцами + конверсии линией
+  const W=520, H=120, pad=16
+  const maxCost = Math.max(1, ...view.map(m=>+m.cost_usd||0))
+  const maxConv = Math.max(1, ...view.map(m=>+m.conversions||0))
+  const barW = view.length ? (W-2*pad)/view.length : 0
+  const convPts = view.map((m,i)=>{
+    const cx = pad + i*barW + barW/2
+    const cy = H-pad - ((+m.conversions||0)/maxConv)*(H-2*pad)
+    return `${cx.toFixed(1)},${cy.toFixed(1)}`
+  }).join(' ')
 
   return (
     <div>
-      <div style={{display:'flex',alignItems:'center',gap:16,marginBottom:12,fontFamily:'JetBrains Mono',fontSize:11,color:'var(--t3)'}}>
-        <span>Итого: <b style={{color:'var(--t)'}}>${totalCost.toFixed(2)}</b></span>
-        <span>Кликов: <b style={{color:'var(--t)'}}>{totalClicks}</b></span>
-        <span>Конв.: <b style={{color:'var(--t)'}}>{totalConv}</b></span>
-        <span>Ср.CPC: <b style={{color:'var(--t)'}}>${avgCpc.toFixed(3)}</b></span>
+      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
+        {[['7','7 дней'],['30','30 дней'],['all','Всё']].map(([k,l])=>(
+          <button key={k} className={`btn${period===k?' btn-acc':''}`} style={{padding:'3px 9px',fontSize:11}} onClick={()=>setPeriod(k)}>{l}</button>
+        ))}
+        <div style={{marginLeft:'auto',display:'flex',gap:14,fontFamily:'JetBrains Mono',fontSize:11,color:'var(--t3)'}}>
+          <span>Спенд: <b style={{color:'#22d17a'}}>${totalCost.toFixed(0)}</b></span>
+          <span>Конв.: <b style={{color:'#f5a623'}}>{totalConv}</b></span>
+          <span>Ср.CPC: <b style={{color:'var(--t)'}}>${avgCpc.toFixed(2)}</b></span>
+        </div>
       </div>
+
+      {view.length > 0 ? (
+        <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:130,background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:6,marginBottom:10}}>
+          {view.map((m,i)=>{
+            const h = ((+m.cost_usd||0)/maxCost)*(H-2*pad)
+            return <rect key={i} x={(pad+i*barW+1).toFixed(1)} y={(H-pad-h).toFixed(1)} width={Math.max(1,barW-2).toFixed(1)} height={h.toFixed(1)} fill="rgba(34,209,122,.45)"/>
+          })}
+          {maxConv>0 && <polyline points={convPts} fill="none" stroke="#f5a623" strokeWidth="1.5"/>}
+          {view.map((m,i)=>{
+            const cx = pad + i*barW + barW/2
+            const cy = H-pad - ((+m.conversions||0)/maxConv)*(H-2*pad)
+            return (+m.conversions||0)>0 ? <circle key={i} cx={cx.toFixed(1)} cy={cy.toFixed(1)} r="2" fill="#f5a623"/> : null
+          })}
+        </svg>
+      ) : (
+        <div style={{padding:'24px',textAlign:'center',color:'var(--t3)',fontSize:12,background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:6,marginBottom:10}}>Нет данных за период</div>
+      )}
 
       <table className="metric-table">
         <thead><tr>
           <th>Дата</th><th>Клики</th><th>CPC (лок.)</th><th>CPC $</th><th>Cost $</th><th>Конв.</th><th>CPA $</th>
         </tr></thead>
         <tbody>
-          {metrics.map(m=>(
+          {viewDesc.map(m=>(
             <tr key={m.id}>
               <td>{m.metric_date}</td>
               <td>{m.clicks||'—'}</td>
@@ -1686,7 +1737,7 @@ function MetricsTab({ accountId, metrics, onAdd, onRefresh }) {
               <td style={{color:m.cpa>70?'#f05555':m.cpa>0?'#22d17a':'var(--t3)'}}>{m.cpa?'$'+Number(m.cpa).toFixed(2):'—'}</td>
             </tr>
           ))}
-          {metrics.length === 0 && <tr><td colSpan={7} style={{color:'var(--t3)',textAlign:'center',padding:'16px'}}>Нет данных</td></tr>}
+          {viewDesc.length === 0 && <tr><td colSpan={7} style={{color:'var(--t3)',textAlign:'center',padding:'16px'}}>Нет данных</td></tr>}
         </tbody>
       </table>
 
