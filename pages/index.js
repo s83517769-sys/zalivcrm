@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, Fragment } from 'react'
 import Head from 'next/head'
 import Link from 'next/link'
 import { api } from '../lib/api'
@@ -160,6 +160,10 @@ export default function Home() {
   const [catFilter, setCatFilter] = useState(null) // 'active'|'problem'|'terminal'|'no_signal'|null
   const [panelOpen, setPanelOpen] = useState(true)
 
+  // ── Группировка ──
+  const [groupBy, setGroupBy] = useState('none') // none|geo|zalivshik|category
+  const [collapsedGroups, setCollapsedGroups] = useState([])
+
   // ── Выделение / массовые действия ──
   const [selectedIds, setSelectedIds] = useState([])
   const [bulkBar, setBulkBar] = useState({ zalivshik:'', geo:'' })
@@ -235,6 +239,7 @@ export default function Home() {
       if (s.pageSize) setPageSize(s.pageSize)
       if (s.sort && s.sort.key) setSort(s.sort)
       if (typeof s.panelOpen === 'boolean') setPanelOpen(s.panelOpen)
+      if (s.groupBy) setGroupBy(s.groupBy)
     } catch {}
     try {
       const ro = JSON.parse(localStorage.getItem('zcrm_row_order') || '[]')
@@ -272,9 +277,9 @@ export default function Home() {
     if (!loaded.current) return
     localStorage.setItem('zcrm_table_settings', JSON.stringify({
       statusSel, geoSel, zalivSel, groupSel, funnelSel, formatSel,
-      launchFrom, launchTo, colOrder, colVisible, pageSize, sort, panelOpen,
+      launchFrom, launchTo, colOrder, colVisible, pageSize, sort, panelOpen, groupBy,
     }))
-  }, [statusSel, geoSel, zalivSel, groupSel, funnelSel, formatSel, launchFrom, launchTo, colOrder, colVisible, pageSize, sort, panelOpen])
+  }, [statusSel, geoSel, zalivSel, groupSel, funnelSel, formatSel, launchFrom, launchTo, colOrder, colVisible, pageSize, sort, panelOpen, groupBy])
 
   useEffect(() => { setPage(1) }, [statusSel, geoSel, zalivSel, groupSel, funnelSel, formatSel, launchFrom, launchTo, search, pageSize, catFilter])
 
@@ -748,6 +753,31 @@ export default function Home() {
   const curPage = Math.min(page, totalPages)
   const pageRows = pageSize === 'all' ? filtered : filtered.slice((curPage-1)*pageSize, curPage*pageSize)
 
+  // ── Группировка ──
+  const CAT_LABEL = { active:'Актив', problem:'Проблема', terminal:'Терминал', neutral:'Нейтр.' }
+  function groupKeyOf(a) {
+    if (groupBy === 'geo') return a.geo || '— без гео —'
+    if (groupBy === 'zalivshik') return a.zalivshik || '— без заливщика —'
+    if (groupBy === 'category') return CAT_LABEL[categoryOf(a.status)] || '—'
+    return ''
+  }
+  function groupSpend(rows) {
+    return rows.reduce((s, a) => {
+      const m = metricsSummary[a.id]
+      return s + (m ? (+m.today?.cost_usd || 0) * rate(m.currency || a.currency || 'USD') : 0)
+    }, 0)
+  }
+  const groupList = (() => {
+    if (groupBy === 'none') return null
+    const map = new Map()
+    for (const a of filtered) { const k = groupKeyOf(a); if (!map.has(k)) map.set(k, []); map.get(k).push(a) }
+    return [...map.entries()].sort((x, y) => String(x[0]).localeCompare(String(y[0])))
+  })()
+  const displayed = groupBy === 'none' ? pageRows : filtered
+  function toggleGroup(k) {
+    setCollapsedGroups(s => s.includes(k) ? s.filter(x => x !== k) : [...s, k])
+  }
+
   let matchedFields = []
   if (search) {
     const set = new Set()
@@ -831,6 +861,55 @@ export default function Home() {
       case 'comment': return <span className="cell-sm muted">{a.comment||'—'}</span>
       default: return null
     }
+  }
+
+  function renderRow(a) {
+    const mt = metricsOf(a, metricsSummary)
+    const marks = ruleHits(a)
+    const rOver = rowOver && rowOver.id===a.id
+    const trStyle = {
+      opacity: rowDrag===a.id ? 0.4 : undefined,
+      boxShadow: rOver
+        ? (rowOver.side==='top' ? 'inset 0 2px 0 var(--acc)' : 'inset 0 -2px 0 var(--acc)')
+        : (marks.stripe ? `inset 3px 0 0 ${marks.stripe}` : undefined),
+    }
+    return (
+      <tr key={a.id} className={a.is_frozen?'frozen-row':''} style={trStyle}
+          onClick={()=>{ if(rowDrag||editCell) return; clearTimeout(openTimer.current); openTimer.current=setTimeout(()=>openDrawer(a),180) }}
+          onDragOver={rowDrag ? (e=>{e.preventDefault();const r=e.currentTarget.getBoundingClientRect();const side=(e.clientY-r.top)<r.height/2?'top':'bottom';if(!rowOver||rowOver.id!==a.id||rowOver.side!==side)setRowOver({id:a.id,side})}) : undefined}
+          onDrop={rowDrag ? (e=>{e.preventDefault();dropRow(a.id)}) : undefined}>
+        <td className="chk-td" onClick={e=>e.stopPropagation()}>
+          <input type="checkbox" checked={selectedIds.includes(a.id)} onChange={()=>toggleSelect(a.id)} onClick={e=>e.stopPropagation()}/>
+        </td>
+        {visibleCols.map(c=>{
+          const isStatus = c.key==='status'
+          const cfg = EDITABLE[c.key]
+          const editing = editCell && editCell.id===a.id && editCell.key===c.key
+          return (
+            <td key={c.key} className={c.align==='r'?'r':undefined}
+                onClick={isStatus ? (e=>{e.stopPropagation();setStatusPopup({id:a.id,x:e.clientX,y:e.clientY})}) : undefined}
+                onDoubleClick={cfg && !isStatus ? (e=>{e.stopPropagation();clearTimeout(openTimer.current);startEdit(a,c.key)}) : undefined}>
+              {editing ? (
+                cfg.t==='select' ? (
+                  <select autoFocus className="cell-edit" value={editVal}
+                          onChange={e=>setEditVal(e.target.value)} onBlur={commitEdit}
+                          onKeyDown={e=>{if(e.key==='Enter')commitEdit();if(e.key==='Escape')cancelEdit()}}
+                          onClick={e=>e.stopPropagation()}>
+                    {cfg.opts.map(o=><option key={o}>{o}</option>)}
+                  </select>
+                ) : (
+                  <input autoFocus className="cell-edit" type={cfg.t==='date'?'date':'text'} value={editVal}
+                         list={cfg.t==='combo'?`dl-${c.key}`:undefined}
+                         onChange={e=>setEditVal(e.target.value)} onBlur={commitEdit}
+                         onKeyDown={e=>{if(e.key==='Enter')commitEdit();if(e.key==='Escape'){e.preventDefault();cancelEdit()}}}
+                         onClick={e=>e.stopPropagation()} onDoubleClick={e=>e.stopPropagation()}/>
+                )
+              ) : cellContent(c.key, a, mt, marks)}
+            </td>
+          )
+        })}
+      </tr>
+    )
   }
 
   return (
@@ -934,6 +1013,13 @@ export default function Home() {
         .cell-edit{width:100%;background:var(--s1);border:1px solid var(--acc);border-radius:4px;padding:3px 6px;color:var(--t);font-size:12px;font-family:'Inter',sans-serif;outline:none}
         .cell-sm.muted{color:var(--t3)}
         .frozen-row td{opacity:.6}
+        .group-row{cursor:pointer;background:var(--s2)}
+        .group-row td{padding:6px 10px!important;border-bottom:1px solid var(--bd2);position:sticky}
+        .group-row:hover td{background:var(--s3)}
+        .grp-tog{display:inline-block;width:14px;color:var(--t3)}
+        .group-row b{color:var(--t);font-size:12px}
+        .grp-cnt{margin-left:8px;font-family:'JetBrains Mono',monospace;font-size:10px;background:var(--s3);padding:1px 6px;border-radius:8px;color:var(--t3)}
+        .grp-sum{margin-left:12px;font-family:'JetBrains Mono',monospace;font-size:11px;color:#22d17a}
         .pager{display:flex;align-items:center;gap:6px;margin-left:auto;font-size:11px;color:var(--t3)}
         .pager button{background:var(--s2);border:1px solid var(--bd);border-radius:4px;padding:2px 8px;color:var(--t2);cursor:pointer;font-size:11px}
         .pager button:disabled{opacity:.4;cursor:default}
@@ -1072,20 +1158,32 @@ export default function Home() {
                 ⚲ Фильтры{activeFilterCount>0 && <span className="badge-cnt">{activeFilterCount}</span>}
               </button>
               <button className="btn" onClick={()=>setShowCols(true)}>⚙️ Колонки</button>
+              <select className="ssel" value={groupBy} onChange={e=>{setGroupBy(e.target.value);setCollapsedGroups([])}} title="Группировка">
+                <option value="none">Группы: нет</option>
+                <option value="geo">по гео</option>
+                <option value="zalivshik">по заливщику</option>
+                <option value="category">по категории</option>
+              </select>
               <span style={{fontSize:11,color:'var(--t3)',marginLeft:6}}>{filtered.length} акк.</span>
               <div className="pager">
-                <span>На странице:</span>
-                <select className="ssel" value={pageSize} onChange={e=>setPageSize(e.target.value==='all'?'all':+e.target.value)}>
-                  <option value={25}>25</option>
-                  <option value={50}>50</option>
-                  <option value={100}>100</option>
-                  <option value="all">Все</option>
-                </select>
-                {pageSize!=='all' && (
+                {groupBy !== 'none' ? (
+                  <span style={{color:'var(--t3)'}}>группировка — показаны все</span>
+                ) : (
                   <>
-                    <button disabled={curPage<=1} onClick={()=>setPage(curPage-1)}>← Назад</button>
-                    <span>Стр. {curPage} из {totalPages}</span>
-                    <button disabled={curPage>=totalPages} onClick={()=>setPage(curPage+1)}>Вперёд →</button>
+                    <span>На странице:</span>
+                    <select className="ssel" value={pageSize} onChange={e=>setPageSize(e.target.value==='all'?'all':+e.target.value)}>
+                      <option value={25}>25</option>
+                      <option value={50}>50</option>
+                      <option value={100}>100</option>
+                      <option value="all">Все</option>
+                    </select>
+                    {pageSize!=='all' && (
+                      <>
+                        <button disabled={curPage<=1} onClick={()=>setPage(curPage-1)}>← Назад</button>
+                        <span>Стр. {curPage} из {totalPages}</span>
+                        <button disabled={curPage>=totalPages} onClick={()=>setPage(curPage+1)}>Вперёд →</button>
+                      </>
+                    )}
                   </>
                 )}
               </div>
@@ -1265,9 +1363,9 @@ export default function Home() {
                   <thead><tr>
                     <th className="chk-th" style={{width:32}}>
                       <input type="checkbox"
-                             checked={pageRows.length>0 && pageRows.every(a=>selectedIds.includes(a.id))}
-                             ref={el=>{ if(el){ const some=pageRows.some(a=>selectedIds.includes(a.id)); const all=pageRows.length>0&&pageRows.every(a=>selectedIds.includes(a.id)); el.indeterminate=some&&!all } }}
-                             onChange={()=>toggleSelectPage(pageRows.map(a=>a.id))}/>
+                             checked={displayed.length>0 && displayed.every(a=>selectedIds.includes(a.id))}
+                             ref={el=>{ if(el){ const some=displayed.some(a=>selectedIds.includes(a.id)); const all=displayed.length>0&&displayed.every(a=>selectedIds.includes(a.id)); el.indeterminate=some&&!all } }}
+                             onChange={()=>toggleSelectPage(displayed.map(a=>a.id))}/>
                     </th>
                     {visibleCols.map(c=>{
                       const over = thOver && thOver.key===c.key
@@ -1291,54 +1389,24 @@ export default function Home() {
                     })}
                   </tr></thead>
                   <tbody>
-                    {pageRows.map(a => {
-                      const mt = metricsOf(a, metricsSummary)
-                      const marks = ruleHits(a)
-                      const rOver = rowOver && rowOver.id===a.id
-                      const trStyle = {
-                        opacity: rowDrag===a.id ? 0.4 : undefined,
-                        boxShadow: rOver
-                          ? (rowOver.side==='top' ? 'inset 0 2px 0 var(--acc)' : 'inset 0 -2px 0 var(--acc)')
-                          : (marks.stripe ? `inset 3px 0 0 ${marks.stripe}` : undefined),
-                      }
-                      return (
-                        <tr key={a.id} className={a.is_frozen?'frozen-row':''} style={trStyle}
-                            onClick={()=>{ if(rowDrag||editCell) return; clearTimeout(openTimer.current); openTimer.current=setTimeout(()=>openDrawer(a),180) }}
-                            onDragOver={rowDrag ? (e=>{e.preventDefault();const r=e.currentTarget.getBoundingClientRect();const side=(e.clientY-r.top)<r.height/2?'top':'bottom';if(!rowOver||rowOver.id!==a.id||rowOver.side!==side)setRowOver({id:a.id,side})}) : undefined}
-                            onDrop={rowDrag ? (e=>{e.preventDefault();dropRow(a.id)}) : undefined}>
-                          <td className="chk-td" onClick={e=>e.stopPropagation()}>
-                            <input type="checkbox" checked={selectedIds.includes(a.id)} onChange={()=>toggleSelect(a.id)} onClick={e=>e.stopPropagation()}/>
-                          </td>
-                          {visibleCols.map(c=>{
-                            const isStatus = c.key==='status'
-                            const cfg = EDITABLE[c.key]
-                            const editing = editCell && editCell.id===a.id && editCell.key===c.key
-                            return (
-                              <td key={c.key} className={c.align==='r'?'r':undefined}
-                                  onClick={isStatus ? (e=>{e.stopPropagation();setStatusPopup({id:a.id,x:e.clientX,y:e.clientY})}) : undefined}
-                                  onDoubleClick={cfg && !isStatus ? (e=>{e.stopPropagation();clearTimeout(openTimer.current);startEdit(a,c.key)}) : undefined}>
-                                {editing ? (
-                                  cfg.t==='select' ? (
-                                    <select autoFocus className="cell-edit" value={editVal}
-                                            onChange={e=>setEditVal(e.target.value)} onBlur={commitEdit}
-                                            onKeyDown={e=>{if(e.key==='Enter')commitEdit();if(e.key==='Escape')cancelEdit()}}
-                                            onClick={e=>e.stopPropagation()}>
-                                      {cfg.opts.map(o=><option key={o}>{o}</option>)}
-                                    </select>
-                                  ) : (
-                                    <input autoFocus className="cell-edit" type={cfg.t==='date'?'date':'text'} value={editVal}
-                                           list={cfg.t==='combo'?`dl-${c.key}`:undefined}
-                                           onChange={e=>setEditVal(e.target.value)} onBlur={commitEdit}
-                                           onKeyDown={e=>{if(e.key==='Enter')commitEdit();if(e.key==='Escape'){e.preventDefault();cancelEdit()}}}
-                                           onClick={e=>e.stopPropagation()} onDoubleClick={e=>e.stopPropagation()}/>
-                                  )
-                                ) : cellContent(c.key, a, mt, marks)}
-                              </td>
-                            )
-                          })}
-                        </tr>
-                      )
-                    })}
+                    {groupBy === 'none'
+                      ? pageRows.map(renderRow)
+                      : groupList.map(([key, rows]) => {
+                          const collapsed = collapsedGroups.includes(key)
+                          return (
+                            <Fragment key={key}>
+                              <tr className="group-row" onClick={()=>toggleGroup(key)}>
+                                <td colSpan={visibleCols.length+1}>
+                                  <span className="grp-tog">{collapsed?'▸':'▾'}</span>
+                                  <b>{key}</b>
+                                  <span className="grp-cnt">{rows.length}</span>
+                                  <span className="grp-sum">спенд ${Math.round(groupSpend(rows)).toLocaleString('ru')}</span>
+                                </td>
+                              </tr>
+                              {!collapsed && rows.map(renderRow)}
+                            </Fragment>
+                          )
+                        })}
                   </tbody>
                 </table>
               )}
