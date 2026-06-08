@@ -145,6 +145,9 @@ export default function Home() {
   const [drawerTab, setDrawerTab] = useState('info')
   const [editForm, setEditForm] = useState(null)
   const [toast, setToast] = useState('')
+  const [toastBtn, setToastBtn] = useState(null) // { label, onClick }
+  const undoRef = useRef([])
+  const redoRef = useRef([])
   const [syncTime, setSyncTime] = useState('')
   const [statusPopup, setStatusPopup] = useState(null)
   const [metricsSummary, setMetricsSummary] = useState({})
@@ -243,6 +246,21 @@ export default function Home() {
 
   useEffect(() => { document.body.className = dark ? 'dark' : 'light' }, [dark])
 
+  // Горячие клавиши undo/redo. В полях ввода — нативный undo (не перехватываем).
+  useEffect(() => {
+    function onKey(e) {
+      const t = e.target
+      const tag = (t?.tagName || '').toLowerCase()
+      if (tag === 'input' || tag === 'select' || tag === 'textarea' || t?.isContentEditable) return
+      if (!(e.metaKey || e.ctrlKey)) return
+      const k = (e.key || '').toLowerCase()
+      if (k === 'z' && !e.shiftKey) { e.preventDefault(); doUndo() }
+      else if ((k === 'z' && e.shiftKey) || k === 'y') { e.preventDefault(); doRedo() }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   useEffect(() => {
     if (!loaded.current) return
     localStorage.setItem('zcrm_table_settings', JSON.stringify({
@@ -317,16 +335,29 @@ export default function Home() {
 
   async function quickStatus(accId, newStatus) {
     setStatusPopup(null)
-    await api(`/api/accounts/${accId}`, { method:'PATCH', body: JSON.stringify({ status: newStatus }) })
+    const prev = accounts.find(a => a.id === accId)?.status ?? null
+    const next = newStatus === '' ? null : newStatus
+    if (prev === next) return
+    await api(`/api/accounts/${accId}`, { method:'PATCH', body: JSON.stringify({ status: next }) })
     await load()
-    showToast('Статус → ' + newStatus)
+    pushAction({
+      label: 'статус',
+      undo: () => applyRestore([{ id: accId, status: prev }]),
+      redo: () => applyRestore([{ id: accId, status: next }]),
+    })
+    showToast(next ? 'Статус → ' + next : 'Статус снят', { label: '↺ Отмена', onClick: doUndo })
   }
 
   async function archiveAcc(id) {
     await api(`/api/accounts/${id}`, { method:'DELETE' })
     await load()
     setDrawer(null)
-    showToast('Аккаунт в архиве')
+    pushAction({
+      label: 'архив',
+      undo: () => applyRestore([{ id, is_archived: false }]),
+      redo: () => applyPatch(id, { is_archived: true }),
+    })
+    showToast('Аккаунт в архиве', { label: '↺ Отмена', onClick: doUndo })
   }
 
   async function addMetric(accountId, row) {
@@ -336,9 +367,47 @@ export default function Home() {
     showToast('Метрики сохранены ✓')
   }
 
-  function showToast(msg) {
+  function showToast(msg, btn = null) {
     setToast(msg)
-    setTimeout(() => setToast(''), 2200)
+    setToastBtn(btn)
+    clearTimeout(showToast._t)
+    showToast._t = setTimeout(() => { setToast(''); setToastBtn(null) }, btn ? 5000 : 2200)
+  }
+
+  // ── Undo / Redo ──
+  function pushAction(action) {
+    undoRef.current.push(action)
+    if (undoRef.current.length > 20) undoRef.current.shift()
+    redoRef.current = []
+  }
+  async function applyPatch(id, fields) {
+    setAccounts(list => list.map(x => x.id === id ? { ...x, ...fields } : x))
+    await api(`/api/accounts/${id}`, { method:'PATCH', body: JSON.stringify(fields) })
+  }
+  async function applyRestore(before) {
+    for (const row of before) {
+      const { id, ...fields } = row
+      await api(`/api/accounts/${id}`, { method:'PATCH', body: JSON.stringify(fields) })
+    }
+    await load()
+  }
+  async function applyBulk(ids, changes) {
+    await api('/api/accounts/bulk-update', { method:'POST', body: JSON.stringify({ ids, changes }) })
+    await load()
+  }
+  async function doUndo() {
+    const a = undoRef.current.pop()
+    if (!a) return showToast('Нечего отменять')
+    await a.undo()
+    redoRef.current.push(a)
+    showToast('Отменено: ' + a.label, { label: '↻ Повтор', onClick: doRedo })
+  }
+  async function doRedo() {
+    const a = redoRef.current.pop()
+    if (!a) return showToast('Нечего повторять')
+    await a.redo()
+    undoRef.current.push(a)
+    showToast('Повторено: ' + a.label)
   }
 
   // ── Инлайн-редактирование ячеек ──
@@ -369,7 +438,12 @@ export default function Home() {
       setAccounts(list => list.map(x => x.id === id ? { ...x, [key]: prev } : x)) // откат
       showToast('Ошибка: ' + r.error)
     } else {
-      showToast('Сохранено ✓')
+      pushAction({
+        label: key,
+        undo: () => applyPatch(id, { [key]: prev ?? null }),
+        redo: () => applyPatch(id, { [key]: nextVal }),
+      })
+      showToast('Сохранено ✓', { label: '↺ Отмена', onClick: doUndo })
     }
   }
 
@@ -387,11 +461,18 @@ export default function Home() {
   async function bulkUpdate(changes, { confirm: confirmMsg, label } = {}) {
     if (selectedIds.length === 0) return
     if (confirmMsg && !window.confirm(confirmMsg)) return
-    const r = await api('/api/accounts/bulk-update', { method:'POST', body: JSON.stringify({ ids: selectedIds, changes }) })
+    const ids = [...selectedIds]
+    const r = await api('/api/accounts/bulk-update', { method:'POST', body: JSON.stringify({ ids, changes }) })
     if (r.error) return showToast('Ошибка: ' + r.error)
     await load()
-    showToast(label || `Обновлено: ${r.updated}`)
-    // (блок 4: r.before — прежние значения для undo)
+    if (Array.isArray(r.before) && r.before.length) {
+      pushAction({
+        label: label || 'массовое',
+        undo: () => applyRestore(r.before),                 // у каждого id — его прежние значения
+        redo: () => applyBulk(r.before.map(b => b.id), changes),
+      })
+    }
+    showToast(label || `Обновлено: ${r.updated}`, { label: '↺ Отмена', onClick: doUndo })
   }
   async function bulkArchive() {
     setConfirmDialog({
@@ -898,7 +979,9 @@ export default function Home() {
         .spin{width:36px;height:36px;border:3px solid var(--bd2);border-top-color:var(--acc);border-radius:50%;animation:spin .8s linear infinite}
         @keyframes spin{to{transform:rotate(360deg)}}
         .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--s3);border:1px solid var(--bd2);border-radius:5px;padding:8px 16px;font-size:12px;color:var(--t);opacity:0;transition:all .2s;z-index:600;pointer-events:none;white-space:nowrap}
-        .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+        .toast.show{opacity:1;transform:translateX(-50%) translateY(0);pointer-events:auto}
+        .toast-btn{margin-left:10px;background:var(--acc2);border:1px solid var(--acc);border-radius:4px;color:#fff;font-size:11px;padding:2px 9px;cursor:pointer;font-family:'Inter',sans-serif}
+        .toast-btn:hover{background:var(--acc)}
         .btn-del{background:rgba(240,85,85,.1);border-color:rgba(240,85,85,.3);color:#f05555}
         .btn-del:hover{background:rgba(240,85,85,.2)}
         ::-webkit-scrollbar{width:4px;height:4px}
@@ -1561,7 +1644,10 @@ export default function Home() {
       <datalist id="dl-dis_reason">{distinctVals('dis_reason').map(v => <option key={v} value={v}/>)}</datalist>
       <datalist id="dl-ban_reason">{distinctVals('ban_reason').map(v => <option key={v} value={v}/>)}</datalist>
 
-      <div className={`toast${toast?' show':''}`}>{toast}</div>
+      <div className={`toast${toast?' show':''}`}>
+        {toast}
+        {toastBtn && <button className="toast-btn" onClick={()=>{ toastBtn.onClick(); setToast(''); setToastBtn(null) }}>{toastBtn.label}</button>}
+      </div>
     </>
   )
 }
