@@ -246,12 +246,19 @@ export default function Home() {
 
   useEffect(() => { document.body.className = dark ? 'dark' : 'light' }, [dark])
 
-  // Горячие клавиши undo/redo. В полях ввода — нативный undo (не перехватываем).
+  // Горячие клавиши undo/redo. Нативный undo оставляем только в текстовых полях.
   useEffect(() => {
+    const TEXT_TYPES = ['text','search','number','email','url','password','tel','date','datetime-local','month','week','time']
+    function isTextField(t) {
+      if (!t) return false
+      if (t.isContentEditable) return true
+      const tag = (t.tagName || '').toLowerCase()
+      if (tag === 'textarea') return true
+      if (tag === 'input') return TEXT_TYPES.includes((t.type || 'text').toLowerCase())
+      return false // <select>, checkbox, button и пр. — не текстовые, undo ловим
+    }
     function onKey(e) {
-      const t = e.target
-      const tag = (t?.tagName || '').toLowerCase()
-      if (tag === 'input' || tag === 'select' || tag === 'textarea' || t?.isContentEditable) return
+      if (isTextField(e.target)) return
       if (!(e.metaKey || e.ctrlKey)) return
       const k = (e.key || '').toLowerCase()
       if (k === 'z' && !e.shiftKey) { e.preventDefault(); doUndo() }
@@ -481,6 +488,7 @@ export default function Home() {
         redo: () => applyBulk(r.before.map(b => b.id), changes),
       })
     }
+    if (typeof document !== 'undefined') document.activeElement?.blur?.() // снять фокус с селекта, чтобы Ctrl+Z ловился
     showToast(label || `Обновлено: ${r.updated}`, { label: '↺ Отмена', onClick: doUndo })
   }
   async function bulkArchive() {
