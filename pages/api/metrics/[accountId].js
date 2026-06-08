@@ -13,7 +13,7 @@ export default async function handler(req, res) {
       .eq('account_id', accountId)
       .eq('user_id', USER_ID)
       .order('metric_date', { ascending: false })
-      .limit(31)
+      .limit(365)
     if (error) return res.status(500).json({ error: error.message })
     return res.status(200).json({ metrics: data })
   }
