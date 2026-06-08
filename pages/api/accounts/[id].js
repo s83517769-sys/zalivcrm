@@ -43,20 +43,23 @@ export default async function handler(req, res) {
       }
     } catch {}
 
-    // Логика автодат при смене статуса
-    if (body.status && body.status !== current.status) {
-      if (autos.pusk_sets_start_date && body.status === 'Пуск' && !current.launch_date) {
-        body.launch_date = today
-      }
-      if (autos.krutit_sets_crut_date && body.status.toLowerCase().includes('крутит') && !current.crut_date) {
-        body.crut_date = today
-      }
-      if (terminalNames.includes(body.status)) {
-        body.is_frozen = true
-        if (!current.ban_date) body.ban_date = today
+    // Смена статуса (включая очистку в null)
+    if ('status' in body && body.status !== current.status) {
+      // Автодаты — только при установке непустого статуса
+      if (body.status) {
+        if (autos.pusk_sets_start_date && body.status === 'Пуск' && !current.launch_date) {
+          body.launch_date = today
+        }
+        if (autos.krutit_sets_crut_date && body.status.toLowerCase().includes('крутит') && !current.crut_date) {
+          body.crut_date = today
+        }
+        if (terminalNames.includes(body.status)) {
+          body.is_frozen = true
+          if (!current.ban_date) body.ban_date = today
+        }
       }
 
-      // Пишем историю
+      // Пишем историю (set и clear)
       await supabaseAdmin.from('account_history').insert({
         account_id: id,
         user_id: USER_ID,

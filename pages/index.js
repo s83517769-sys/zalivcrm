@@ -160,6 +160,7 @@ export default function Home() {
   // ── Выделение / массовые действия ──
   const [selectedIds, setSelectedIds] = useState([])
   const [bulkBar, setBulkBar] = useState({ zalivshik:'', geo:'' })
+  const [confirmDialog, setConfirmDialog] = useState(null) // { msg, onYes }
 
   // ── Инлайн-редактирование ──
   const [editCell, setEditCell] = useState(null) // { id, key, t, opts }
@@ -393,8 +394,14 @@ export default function Home() {
     // (блок 4: r.before — прежние значения для undo)
   }
   async function bulkArchive() {
-    await bulkUpdate({ is_archived: true }, { confirm: `Заархивировать ${selectedIds.length} аккаунт(ов)?`, label: 'В архив ✓' })
-    clearSelection()
+    setConfirmDialog({
+      msg: `Заархивировать ${selectedIds.length} аккаунт(ов)? Их можно вернуть из архива.`,
+      onYes: async () => {
+        setConfirmDialog(null)
+        await bulkUpdate({ is_archived: true }, { label: 'В архив ✓' })
+        clearSelection()
+      },
+    })
   }
   function copySelected(field, label) {
     const vals = accounts.filter(a => selectedIds.includes(a.id)).map(a => a[field] || '').filter(Boolean).join('\n')
@@ -1099,8 +1106,9 @@ export default function Home() {
                   <button className="btn" onClick={()=>selectAllFiltered(filtered.map(a=>a.id))}>Выделить все по фильтру ({filtered.length})</button>
                 )}
                 <div className="bb-sep"/>
-                <select className="ssel" value="" onChange={e=>{ if(e.target.value){ bulkUpdate({status:e.target.value},{label:'Статус → '+e.target.value}); } }}>
+                <select className="ssel" value="" onChange={e=>{ const v=e.target.value; if(v==='__none__'){ bulkUpdate({status:null},{label:'Статус снят'}); } else if(v){ bulkUpdate({status:v},{label:'Статус → '+v}); } }}>
                   <option value="">Статус всем…</option>
+                  <option value="__none__">— без статуса —</option>
                   {STATUSES.map(st=><option key={st} value={st}>{st}</option>)}
                 </select>
                 <input className="bb-inp" placeholder="Заливщик…" value={bulkBar.zalivshik} onChange={e=>setBulkBar({...bulkBar,zalivshik:e.target.value})}
@@ -1272,6 +1280,10 @@ export default function Home() {
       {statusPopup && (
         <div style={{position:'fixed',inset:0,zIndex:399}} onClick={()=>setStatusPopup(null)}>
           <div className="status-popup" style={{left:Math.min(statusPopup.x,window.innerWidth-190),top:Math.min(statusPopup.y+4,window.innerHeight-300)}}>
+            <div className="sp-item" onClick={e=>{e.stopPropagation();quickStatus(statusPopup.id,'')}} style={{color:'var(--t3)'}}>
+              <span style={{width:7,height:7,borderRadius:'50%',border:'1px solid var(--t3)',display:'inline-block',flexShrink:0}}/>
+              — без статуса —
+            </div>
             {STATUSES.map(st=>(
               <div key={st} className="sp-item" onClick={e=>{e.stopPropagation();quickStatus(statusPopup.id,st)}}>
                 <span style={{width:7,height:7,borderRadius:'50%',background:STATUS_COLOR[st]||'#6b7280',display:'inline-block',flexShrink:0}}/>
@@ -1328,6 +1340,7 @@ export default function Home() {
                     <div className="fi"><label>Google Ads ID</label><input value={editForm.google_ads_id||''} onChange={e=>setEditForm({...editForm,google_ads_id:e.target.value})}/></div>
                     <div className="fi"><label>Статус</label>
                       <select value={editForm.status||''} onChange={e=>setEditForm({...editForm,status:e.target.value})}>
+                        <option value="">— без статуса —</option>
                         {STATUSES.map(s=><option key={s}>{s}</option>)}
                       </select>
                     </div>
@@ -1422,7 +1435,8 @@ export default function Home() {
               <div className="fi"><label>Название *</label><input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="SL-USA-200"/></div>
               <div className="fi"><label>Google Ads ID</label><input value={form.google_ads_id} onChange={e=>setForm({...form,google_ads_id:e.target.value})} placeholder="123-456-7890"/></div>
               <div className="fi"><label>Статус</label>
-                <select value={form.status} onChange={e=>setForm({...form,status:e.target.value})}>
+                <select value={form.status||''} onChange={e=>setForm({...form,status:e.target.value})}>
+                  <option value="">— без статуса —</option>
                   {STATUSES.map(s=><option key={s}>{s}</option>)}
                 </select>
               </div>
@@ -1521,6 +1535,19 @@ export default function Home() {
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* CONFIRM DIALOG */}
+      {confirmDialog && (
+        <div className="modal-bg" onClick={()=>setConfirmDialog(null)} style={{zIndex:700}}>
+          <div className="modal" onClick={e=>e.stopPropagation()} style={{width:380}}>
+            <div style={{fontSize:14,color:'var(--t)',lineHeight:1.5,marginBottom:18}}>{confirmDialog.msg}</div>
+            <div className="modal-acts" style={{borderTop:'none',paddingTop:0}}>
+              <button className="btn" onClick={()=>setConfirmDialog(null)}>Отмена</button>
+              <button className="btn btn-del" onClick={confirmDialog.onYes}>Подтвердить</button>
+            </div>
           </div>
         </div>
       )}
