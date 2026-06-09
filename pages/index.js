@@ -51,6 +51,7 @@ const ALL_COLUMNS = [
   { key:'launch_date',label:'Дата пуска', width:100, align:'l' },
   { key:'crut_date',  label:'Дата крута', width:100, align:'l' },
   { key:'ban_date',   label:'Дата бана',  width:100, align:'l' },
+  { key:'last_seen',  label:'Активность', width:120, align:'l' },
   { key:'dis',        label:'Дизапрув',   width:160, align:'l' },
   { key:'comment',    label:'Комментарий',width:120, align:'l' },
   { key:'google_tag', label:'Google Tag', width:120, align:'l' },
@@ -58,10 +59,10 @@ const ALL_COLUMNS = [
 const COLMAP = Object.fromEntries(ALL_COLUMNS.map(c => [c.key, c]))
 const ALL_KEYS = ALL_COLUMNS.map(c => c.key)
 const DEFAULT_ORDER = [
-  'name','status','tech_status','geo','funnel','creo','today_cost','yest_cost','clicks','conv','cpa',
-  'card','zalivshik','format','launch_date','crut_date','ban_date','dis','comment','google_tag'
+  'zalivshik','name','status','geo','today_cost','yest_cost','cpa','last_seen',
+  'tech_status','funnel','creo','clicks','conv','card','format','launch_date','crut_date','ban_date','dis','comment','google_tag'
 ]
-const DEFAULT_VISIBLE = ['name','status','tech_status','geo','funnel','creo','today_cost','yest_cost','clicks','conv','cpa','card','zalivshik','dis','comment']
+const DEFAULT_VISIBLE = ['zalivshik','name','status','geo','today_cost','yest_cost','cpa','last_seen']
 const defaultVisibleMap = () => Object.fromEntries(ALL_KEYS.map(k => [k, DEFAULT_VISIBLE.includes(k)]))
 
 // Поля для расширенного поиска
@@ -123,6 +124,7 @@ function sortVal(key, a, summary) {
     case 'launch_date': return a.launch_date || ''
     case 'crut_date': return a.crut_date || ''
     case 'ban_date': return a.ban_date || ''
+    case 'last_seen': return a.last_seen_at || ''
     case 'dis': return a.dis_reason || ''
     case 'comment': return a.comment || ''
     case 'google_tag': return a.google_tag || ''
@@ -201,10 +203,14 @@ export default function Home() {
   // ── Колонки ──
   const [colOrder, setColOrder] = useState(DEFAULT_ORDER)
   const [colVisible, setColVisible] = useState(defaultVisibleMap())
+  const [colWidths, setColWidths] = useState({}) // { key: px } override
   const [showCols, setShowCols] = useState(false)
   const [dragIdx, setDragIdx] = useState(null)
   const [thDrag, setThDrag] = useState(null)
   const [thOver, setThOver] = useState(null) // { key, side: 'left'|'right' }
+  const resizingRef = useRef(null) // { key, startX, startW }
+  const colCfgTimer = useRef(null)
+  const dbReady = useRef(false) // не писать column_config в БД до применения значений из БД
 
   // ── Сортировка / страницы ──
   const [sort, setSort] = useState({ key:'created_at', dir:'desc' })
@@ -236,10 +242,12 @@ export default function Home() {
         setColOrder(merged)
       }
       if (s.colVisible) setColVisible({ ...defaultVisibleMap(), ...s.colVisible })
+      if (s.colWidths) setColWidths(s.colWidths)
       if (s.pageSize) setPageSize(s.pageSize)
       if (s.sort && s.sort.key) setSort(s.sort)
       if (typeof s.panelOpen === 'boolean') setPanelOpen(s.panelOpen)
       if (s.groupBy) setGroupBy(s.groupBy)
+      if (Array.isArray(s.collapsedGroups)) setCollapsedGroups(s.collapsedGroups)
     } catch {}
     try {
       const ro = JSON.parse(localStorage.getItem('zcrm_row_order') || '[]')
@@ -277,9 +285,18 @@ export default function Home() {
     if (!loaded.current) return
     localStorage.setItem('zcrm_table_settings', JSON.stringify({
       statusSel, geoSel, zalivSel, groupSel, funnelSel, formatSel,
-      launchFrom, launchTo, colOrder, colVisible, pageSize, sort, panelOpen, groupBy,
+      launchFrom, launchTo, colOrder, colVisible, colWidths, pageSize, sort, panelOpen, groupBy, collapsedGroups,
     }))
-  }, [statusSel, geoSel, zalivSel, groupSel, funnelSel, formatSel, launchFrom, launchTo, colOrder, colVisible, pageSize, sort, panelOpen, groupBy])
+  }, [statusSel, geoSel, zalivSel, groupSel, funnelSel, formatSel, launchFrom, launchTo, colOrder, colVisible, colWidths, pageSize, sort, panelOpen, groupBy, collapsedGroups])
+
+  // Сохранение конфигурации колонок в БД (column_config) — переживает смену устройства. localStorage выше = кэш.
+  useEffect(() => {
+    if (!dbReady.current) return
+    clearTimeout(colCfgTimer.current)
+    colCfgTimer.current = setTimeout(() => {
+      api('/api/users/settings', { method:'POST', body: JSON.stringify({ column_config: { order: colOrder, visible: colVisible, widths: colWidths } }) }).catch(()=>{})
+    }, 600)
+  }, [colOrder, colVisible, colWidths])
 
   useEffect(() => { setPage(1) }, [statusSel, geoSel, zalivSel, groupSel, funnelSel, formatSel, launchFrom, launchTo, search, pageSize, catFilter])
 
@@ -306,6 +323,16 @@ export default function Home() {
     if (Array.isArray(sData?.settings?.row_rules)) {
       setRowRules(sData.settings.row_rules)
     }
+    // column_config из БД важнее localStorage (переживает смену устройства)
+    const cc = sData?.settings?.column_config
+    if (cc && Object.keys(cc).length) {
+      if (Array.isArray(cc.order) && cc.order.length) {
+        setColOrder([...cc.order.filter(k => COLMAP[k]), ...ALL_KEYS.filter(k => !cc.order.includes(k))])
+      }
+      if (cc.visible) setColVisible({ ...defaultVisibleMap(), ...cc.visible })
+      if (cc.widths) setColWidths(cc.widths)
+    }
+    dbReady.current = true // теперь правки колонок можно писать в БД
     setLoading(false)
     const now = new Date()
     setSyncTime(now.getHours().toString().padStart(2,'0')+':'+now.getMinutes().toString().padStart(2,'0'))
@@ -622,6 +649,7 @@ export default function Home() {
   function resetCols() {
     setColOrder(DEFAULT_ORDER)
     setColVisible(defaultVisibleMap())
+    setColWidths({})
   }
 
   function persistRowOrder(order) {
@@ -660,6 +688,27 @@ export default function Home() {
     if (side === 'right') toI += 1
     next.splice(toI, 0, fromKey)
     setColOrder(next)
+  }
+
+  // Ширина колонки: пользовательский override или дефолт
+  const colW = (c) => colWidths[c.key] || c.width
+
+  // Изменение ширины колонки перетаскиванием правого края заголовка
+  function startResize(e, c) {
+    e.stopPropagation(); e.preventDefault()
+    resizingRef.current = { key: c.key, startX: e.clientX, startW: colW(c) }
+    const onMove = (ev) => {
+      const r = resizingRef.current; if (!r) return
+      const w = Math.max(50, r.startW + (ev.clientX - r.startX))
+      setColWidths(prev => ({ ...prev, [r.key]: w }))
+    }
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      setTimeout(() => { resizingRef.current = null }, 0) // дать onDragStart увидеть флаг
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
   }
 
   // Уникальные значения для мультиселектов
@@ -855,6 +904,13 @@ export default function Home() {
       case 'launch_date': return <span className="cell-sm">{a.launch_date||'—'}</span>
       case 'crut_date': return <span className="cell-sm">{a.crut_date||'—'}</span>
       case 'ban_date': return <span className="cell-sm">{a.ban_date||'—'}</span>
+      case 'last_seen': {
+        if (!a.last_seen_at) return <span className="cell-sm muted">—</span>
+        const d = new Date(a.last_seen_at)
+        const txt = d.toLocaleString('ru', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })
+        const stale = (Date.now() - d.getTime()) > 2*3600*1000
+        return <span className="cell-sm" style={{color:stale?'#f5a623':'var(--t2)',fontFamily:'JetBrains Mono'}}>{txt}</span>
+      }
       case 'google_tag': return <span className="cell-sm muted">{a.google_tag||'—'}</span>
       case 'today_cost': return <span style={{color:mt.today_cost>0?'#22d17a':'var(--t3)',fontWeight:mt.today_cost>0?500:400}}>{money(mt.today_cost)}</span>
       case 'yest_cost': return <span style={{color:mt.yest_cost>0?'var(--t2)':'var(--t3)'}}>{money(mt.yest_cost)}</span>
@@ -1004,7 +1060,9 @@ export default function Home() {
         .chip.act{background:rgba(91,110,245,.15);border-color:var(--acc);color:var(--acc)}
         .date-inp{background:var(--s2);border:1px solid var(--bd);border-radius:4px;padding:3px 6px;font-size:11px;color:var(--t);outline:none;font-family:'Inter',sans-serif}
         .tbl-wrap{flex:1;overflow:auto}
-        table{width:100%;border-collapse:collapse;font-size:12px}
+        table{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed}
+        .col-resize{position:absolute;top:0;right:0;width:6px;height:100%;cursor:col-resize;user-select:none}
+        .col-resize:hover{background:var(--acc)}
         thead th{position:sticky;top:0;background:var(--s2);padding:7px 9px;text-align:left;font-size:10px;color:var(--t3);font-weight:500;letter-spacing:.05em;text-transform:uppercase;border-bottom:1px solid var(--bd);white-space:nowrap;z-index:10;cursor:grab;user-select:none}
         thead th:hover{color:var(--t)}
         thead th:active{cursor:grabbing}
@@ -1012,7 +1070,7 @@ export default function Home() {
         thead th .arr{color:var(--acc);margin-left:3px}
         tbody tr{border-bottom:1px solid var(--bd);cursor:pointer;transition:background .07s}
         tbody tr:hover td{background:var(--s2)}
-        td{padding:6px 9px;vertical-align:middle;white-space:nowrap}
+        td{padding:6px 9px;vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
         td.r{text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px}
         .acc-name{font-family:'JetBrains Mono',monospace;font-weight:500;font-size:12px;color:var(--t)}
         .acc-sub{font-size:10px;color:var(--t3);margin-top:1px}
@@ -1379,20 +1437,22 @@ export default function Home() {
                     {visibleCols.map(c=>{
                       const over = thOver && thOver.key===c.key
                       const thStyle = {
-                        width:c.width,
+                        width:colW(c), minWidth:colW(c), maxWidth:colW(c),
                         opacity: thDrag===c.key ? 0.5 : 1,
                         boxShadow: over ? (thOver.side==='left' ? 'inset 2px 0 0 var(--acc)' : 'inset -2px 0 0 var(--acc)') : undefined,
+                        position:'relative',
                       }
                       return (
                         <th key={c.key} style={thStyle} className={c.align==='r'?'r':undefined}
                             draggable
-                            onClick={()=>toggleSort(c.key)}
-                            onDragStart={()=>setThDrag(c.key)}
+                            onClick={()=>{ if(resizingRef.current) return; toggleSort(c.key) }}
+                            onDragStart={e=>{ if(resizingRef.current){e.preventDefault();return} setThDrag(c.key) }}
                             onDragEnd={()=>{setThDrag(null);setThOver(null)}}
                             onDragOver={e=>{e.preventDefault();const r=e.currentTarget.getBoundingClientRect();const side=(e.clientX-r.left)<r.width/2?'left':'right';if(!thOver||thOver.key!==c.key||thOver.side!==side)setThOver({key:c.key,side})}}
                             onDrop={e=>{e.preventDefault();dropTh(c.key)}}>
                           {c.label}
                           {sort.key===c.key && <span className="arr">{sort.dir==='asc'?'↑':'↓'}</span>}
+                          <span className="col-resize" onMouseDown={e=>startResize(e,c)} onClick={e=>e.stopPropagation()} draggable={false} title="Изменить ширину"/>
                         </th>
                       )
                     })}
