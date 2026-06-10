@@ -11,7 +11,7 @@ const DEFAULT_WATCHDOG_HOURS = 2
 const WRITABLE = [
   'custom_statuses', 'custom_groups', 'watchdog_hours', 'column_config',
   'row_rules', 'currency_rates', 'ui_density', 'ui_theme',
-  'status_automations', 'default_sort',
+  'status_automations', 'default_sort', 'user_timezone',
 ]
 
 function notEmpty(v) {
@@ -46,6 +46,7 @@ export default async function handler(req, res) {
         ui_theme: row?.ui_theme || 'dark',
         status_automations: notEmpty(row?.status_automations) ? row.status_automations : DEFAULT_STATUS_AUTOMATIONS,
         default_sort: row?.default_sort || null,
+        user_timezone: row?.user_timezone || 'Europe/Nicosia',
       },
     })
   }
