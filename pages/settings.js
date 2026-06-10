@@ -25,6 +25,8 @@ export default function Settings() {
   const [customStatuses, setCustomStatuses] = useState([])
   const [customGroups, setCustomGroups] = useState([])
   const [watchdogHours, setWatchdogHours] = useState(2)
+  const [userTz, setUserTz] = useState('Europe/Nicosia')
+  const [tzSaving, setTzSaving] = useState(false)
   const [rowRules, setRowRules] = useState([])
   const [rates, setRates] = useState({ USD:1 })
   const [newRate, setNewRate] = useState({ cur:'', val:'' })
@@ -54,6 +56,7 @@ export default function Settings() {
       setWatchdogHours(s.settings.watchdog_hours ?? 2)
       setRowRules(s.settings.row_rules || [])
       setRates({ USD:1, ...(s.settings.currency_rates || {}) })
+      if (s.settings.user_timezone) setUserTz(s.settings.user_timezone)
     }
     setAccounts(a.accounts || [])
   }
@@ -180,6 +183,24 @@ export default function Settings() {
   }
 
   // ── Watchdog ──
+  // ── Часовой пояс ──
+  const TZ_LIST = (typeof Intl !== 'undefined' && typeof Intl.supportedValuesOf === 'function')
+    ? Intl.supportedValuesOf('timeZone')
+    : ['Europe/Nicosia','Europe/Kyiv','Europe/Moscow','Europe/Warsaw','Europe/Berlin','Europe/London','America/New_York','America/Los_Angeles','Asia/Dubai','Asia/Bangkok','UTC']
+  async function saveTz(tz) {
+    setUserTz(tz)
+    setTzSaving(true)
+    const ok = await saveSettings({ user_timezone: tz })
+    setTzSaving(false)
+    if (ok) showToast('Часовой пояс сохранён ✓ — спенд пересчитан')
+  }
+  function autoTz() {
+    try {
+      const detected = Intl.DateTimeFormat().resolvedOptions().timeZone
+      if (detected) saveTz(detected)
+    } catch { showToast('Не удалось определить пояс') }
+  }
+
   async function saveWatchdog() {
     const h = Math.max(1, parseInt(watchdogHours) || 2)
     setWatchdogHours(h)
@@ -253,6 +274,8 @@ export default function Settings() {
         .rate-val:focus{border-color:var(--acc)}
         .rate-val:disabled{opacity:.5}
         .rate-eq{flex:1;font-size:11px;color:var(--t3)}
+        .tz-sel{background:var(--s2);border:1px solid var(--bd);border-radius:6px;padding:8px 10px;color:var(--t);font-size:13px;outline:none;width:100%;font-family:'Inter',sans-serif;cursor:pointer}
+        .tz-sel:focus{border-color:var(--acc)}
         .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--s3);border:1px solid var(--bd2);border-radius:5px;padding:8px 16px;font-size:12px;color:var(--t);opacity:0;transition:all .2s;z-index:600;pointer-events:none;white-space:nowrap}
         .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
         ::-webkit-scrollbar{width:4px;height:4px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:2px}
@@ -429,6 +452,25 @@ export default function Settings() {
               <input type="number" step="0.0001" value={newRate.val} onChange={e=>setNewRate({...newRate,val:e.target.value})} placeholder="0.74"/>
             </div>
             <button className="btn btn-acc" onClick={addRate}>+ Добавить</button>
+          </div>
+        </div>
+
+        {/* ЧАСОВОЙ ПОЯС */}
+        <div className="card">
+          <h2>🌍 Часовой пояс</h2>
+          <div className="hint" style={{marginBottom:10}}>Спенд и время показываются по этому поясу. Смена пояса пересчитывает всю историю (часы хранятся в БД).</div>
+          <div className="row">
+            <div className="fi" style={{flex:1,maxWidth:320,marginBottom:0}}>
+              <label>Пояс</label>
+              <select className="tz-sel" value={userTz} onChange={e=>saveTz(e.target.value)} disabled={tzSaving}>
+                {!TZ_LIST.includes(userTz) && <option value={userTz}>{userTz}</option>}
+                {TZ_LIST.map(z=><option key={z} value={z}>{z}</option>)}
+              </select>
+            </div>
+            <button className="btn" onClick={autoTz} disabled={tzSaving}>📍 Определить автоматически</button>
+          </div>
+          <div className="hint" style={{marginTop:8}}>
+            Сейчас в этом поясе: {(() => { try { return new Date().toLocaleString('ru', { timeZone: userTz, day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) } catch { return '—' } })()}
           </div>
         </div>
 

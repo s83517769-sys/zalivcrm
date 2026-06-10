@@ -163,6 +163,7 @@ export default function Home() {
   const [statusDefs, setStatusDefs] = useState(DEFAULT_STATUSES)
   const [currencyRates, setCurrencyRates] = useState({ USD:1 })
   const [rowRules, setRowRules] = useState(DEFAULT_ROW_RULES)
+  const [userTz, setUserTz] = useState(null) // часовой пояс пользователя (из настроек)
 
   // ── Сводная панель ──
   const [catFilter, setCatFilter] = useState(null) // 'active'|'problem'|'terminal'|'no_signal'|null
@@ -373,6 +374,7 @@ export default function Home() {
     if (Array.isArray(sData?.settings?.row_rules)) {
       setRowRules(sData.settings.row_rules)
     }
+    if (sData?.settings?.user_timezone) setUserTz(sData.settings.user_timezone)
     // column_config из БД важнее localStorage (переживает смену устройства)
     const cc = sData?.settings?.column_config
     if (cc && Object.keys(cc).length) {
@@ -964,9 +966,14 @@ export default function Home() {
       case 'last_seen': {
         if (!a.last_seen_at) return <span className="cell-sm muted">—</span>
         const d = new Date(a.last_seen_at)
-        const txt = d.toLocaleString('ru', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })
+        let txt
+        try {
+          txt = d.toLocaleString('ru', { timeZone: userTz || undefined, day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })
+        } catch {
+          txt = d.toLocaleString('ru', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })
+        }
         const stale = (Date.now() - d.getTime()) > 2*3600*1000
-        return <span className="cell-sm" style={{color:stale?'#f5a623':'var(--t2)',fontFamily:'JetBrains Mono'}}>{txt}</span>
+        return <span className="cell-sm" style={{color:stale?'#f5a623':'var(--t2)',fontFamily:'JetBrains Mono'}} title={userTz?`по поясу ${userTz}`:undefined}>{txt}</span>
       }
       case 'google_tag': return <span className="cell-sm muted">{a.google_tag||'—'}</span>
       case 'today_cost': return <span style={{color:mt.today_cost>0?'#22d17a':'var(--t3)',fontWeight:mt.today_cost>0?500:400}}>{money(mt.today_cost)}</span>

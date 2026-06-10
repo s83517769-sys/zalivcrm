@@ -1,5 +1,8 @@
+import { DateTime } from 'luxon'
 import { supabaseAdmin } from '../../../lib/supabase'
 import { getUserIdFromRequest } from '../../../lib/auth'
+
+const DEFAULT_TZ = 'Europe/Nicosia'
 
 export default async function handler(req, res) {
   const USER_ID = await getUserIdFromRequest(req)
@@ -15,7 +18,59 @@ export default async function handler(req, res) {
       .order('metric_date', { ascending: false })
       .limit(365)
     if (error) return res.status(500).json({ error: error.message })
-    return res.status(200).json({ metrics: data })
+
+    // Дни из часов под пояс пользователя — точнее дневной таблицы, перекрывают её
+    const byDate = {}
+    for (const r of (data || [])) byDate[r.metric_date] = r
+    try {
+      let userTz = DEFAULT_TZ
+      const { data: us } = await supabaseAdmin
+        .from('user_settings')
+        .select('user_timezone')
+        .eq('user_id', USER_ID)
+        .maybeSingle()
+      if (us?.user_timezone && DateTime.local().setZone(us.user_timezone).isValid) userTz = us.user_timezone
+
+      const since = DateTime.now().setZone(userTz).minus({ days: 92 }).toISODate()
+      const { data: hours } = await supabaseAdmin
+        .from('hourly_metrics')
+        .select('metric_date, hour, account_timezone, cost_native, clicks, conversions')
+        .eq('account_id', accountId)
+        .eq('user_id', USER_ID)
+        .gte('metric_date', since)
+
+      const days = {} // userDate -> агрегат
+      for (const h of (hours || [])) {
+        const zone = h.account_timezone && DateTime.local().setZone(h.account_timezone).isValid ? h.account_timezone : 'UTC'
+        const dt = DateTime.fromISO(h.metric_date, { zone }).set({ hour: h.hour })
+        if (!dt.isValid) continue
+        const userDate = dt.setZone(userTz).toISODate()
+        const d = days[userDate] || (days[userDate] = { cost: 0, clicks: 0, conversions: 0 })
+        d.cost += +h.cost_native || 0
+        d.clicks += +h.clicks || 0
+        d.conversions += +h.conversions || 0
+      }
+      for (const [date, d] of Object.entries(days)) {
+        byDate[date] = {
+          id: `h-${accountId}-${date}`,
+          account_id: accountId,
+          metric_date: date,
+          clicks: d.clicks,
+          cost_usd: Math.round(d.cost * 100) / 100,   // имя историческое; нативная валюта
+          conversions: Math.round(d.conversions * 100) / 100,
+          cpc_usd: d.clicks > 0 ? Math.round(d.cost / d.clicks * 10000) / 10000 : 0,
+          cpa: d.conversions > 0 ? Math.round(d.cost / d.conversions * 100) / 100 : 0,
+          source: 'hourly',
+        }
+      }
+    } catch (e) {
+      console.error('hourly day-rollup error:', e)
+    }
+
+    const merged = Object.values(byDate)
+      .sort((a, b) => (a.metric_date < b.metric_date ? 1 : -1))
+      .slice(0, 365)
+    return res.status(200).json({ metrics: merged })
   }
 
   if (req.method === 'POST') {
