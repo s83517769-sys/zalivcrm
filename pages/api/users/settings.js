@@ -40,13 +40,17 @@ export default async function handler(req, res) {
         custom_groups: notEmpty(row?.custom_groups) ? row.custom_groups : DEFAULT_GROUPS,
         watchdog_hours: row?.watchdog_hours ?? DEFAULT_WATCHDOG_HOURS,
         column_config: row?.column_config || {},
-        row_rules: notEmpty(row?.row_rules) ? row.row_rules : DEFAULT_ROW_RULES,
+        // сохранённые правила + новые дефолтные, которых у пользователя ещё нет (по id)
+        row_rules: notEmpty(row?.row_rules)
+          ? [...row.row_rules, ...DEFAULT_ROW_RULES.filter(d => !row.row_rules.some(r => r.id === d.id))]
+          : DEFAULT_ROW_RULES,
         currency_rates: notEmpty(row?.currency_rates) ? row.currency_rates : DEFAULT_CURRENCY_RATES,
         ui_density: row?.ui_density || 'cozy',
         ui_theme: row?.ui_theme || 'dark',
         status_automations: notEmpty(row?.status_automations) ? row.status_automations : DEFAULT_STATUS_AUTOMATIONS,
         default_sort: row?.default_sort || null,
-        user_timezone: row?.user_timezone || 'Europe/Nicosia',
+        // канонический IANA-id Кипра — Asia/Nicosia (Europe/Nicosia — алиас, его нет в списках выбора)
+        user_timezone: (row?.user_timezone || 'Asia/Nicosia') === 'Europe/Nicosia' ? 'Asia/Nicosia' : (row?.user_timezone || 'Asia/Nicosia'),
       },
     })
   }

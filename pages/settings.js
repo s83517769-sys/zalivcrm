@@ -25,7 +25,7 @@ export default function Settings() {
   const [customStatuses, setCustomStatuses] = useState([])
   const [customGroups, setCustomGroups] = useState([])
   const [watchdogHours, setWatchdogHours] = useState(2)
-  const [userTz, setUserTz] = useState('Europe/Nicosia')
+  const [userTz, setUserTz] = useState('Asia/Nicosia')
   const [tzSaving, setTzSaving] = useState(false)
   const [rowRules, setRowRules] = useState([])
   const [rates, setRates] = useState({ USD:1 })
@@ -63,7 +63,8 @@ export default function Settings() {
 
   // ── Правила подсветки ──
   const RULE_LABELS = {
-    no_signal:'НЕТ СВЯЗИ (tech_status)', spend_no_conv:'Спенд > 0, но 0 конверсий',
+    no_signal:'НЕТ СВЯЗИ (tech_status)', maybe_ban:'Возможно бан (тратил → замолчал)',
+    spend_no_conv:'Спенд > 0, но 0 конверсий',
     cpa_high:'CPA выше порога', cpc_jump:'Скачок CPC сегодня к вчера',
   }
   const RULE_HAS_THRESHOLD = { cpa_high:'$', cpc_jump:'%' }
@@ -186,7 +187,7 @@ export default function Settings() {
   // ── Часовой пояс ──
   const TZ_LIST = (typeof Intl !== 'undefined' && typeof Intl.supportedValuesOf === 'function')
     ? Intl.supportedValuesOf('timeZone')
-    : ['Europe/Nicosia','Europe/Kyiv','Europe/Moscow','Europe/Warsaw','Europe/Berlin','Europe/London','America/New_York','America/Los_Angeles','Asia/Dubai','Asia/Bangkok','UTC']
+    : ['Asia/Nicosia','Europe/Kyiv','Europe/Moscow','Europe/Warsaw','Europe/Berlin','Europe/London','America/New_York','America/Los_Angeles','Asia/Dubai','Asia/Bangkok','UTC']
   async function saveTz(tz) {
     setUserTz(tz)
     setTzSaving(true)

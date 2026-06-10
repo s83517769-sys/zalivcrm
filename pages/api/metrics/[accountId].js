@@ -2,7 +2,7 @@ import { DateTime } from 'luxon'
 import { supabaseAdmin } from '../../../lib/supabase'
 import { getUserIdFromRequest } from '../../../lib/auth'
 
-const DEFAULT_TZ = 'Europe/Nicosia'
+const DEFAULT_TZ = 'Asia/Nicosia'
 
 export default async function handler(req, res) {
   const USER_ID = await getUserIdFromRequest(req)

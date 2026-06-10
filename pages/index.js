@@ -836,6 +836,7 @@ export default function Home() {
     const v = {
       tech_status: a.tech_status,
       today_cost: +t.cost_usd || 0,
+      yest_cost: +y.cost_usd || 0,
       today_conv: +t.conversions || 0,
       cpa: +t.cpa || 0,
       today_cpc: +t.cpc_usd || 0,
@@ -844,6 +845,7 @@ export default function Home() {
     const matches = (r) => {
       switch (r.field) {
         case 'tech_status':   return v.tech_status === (r.value || 'НЕТ СВЯЗИ')
+        case 'maybe_ban':     return v.tech_status === 'НЕТ СВЯЗИ' && (v.today_cost > 0 || v.yest_cost > 0)
         case 'spend_no_conv': return v.today_cost > 0 && v.today_conv === 0
         case 'cpa':           return v.cpa > (+r.value || 70)
         case 'cpc_jump_pct':  return v.yest_cpc > 0 && ((v.today_cpc - v.yest_cpc) / v.yest_cpc * 100) > (+r.value || 50)
@@ -936,10 +938,16 @@ export default function Home() {
         </span>
       )
       case 'tech_status': {
+        // системные цвета: Крутит зелёный, Отклонены/Бюджет оранжевый, Пауза серый, Нет связи красный
         const TS = {
+          'Крутит':{l:'Крутит',c:'#22d17a'},
+          'Отклонены':{l:'Отклонены',c:'#f5a623'},
+          'Бюджет':{l:'Бюджет',c:'#f5a623'},
+          'Пауза':{l:'Пауза',c:'#6b7280'},
+          // легаси-статусы старого скрипта
           'РАБОТАЕТ':{l:'РАБОТАЕТ',c:'#22d17a'},
-          'ВСЕ НА ПАУЗЕ':{l:'ПАУЗЕ',c:'#f5a623'},
-          'ПАУЗЕ':{l:'ПАУЗЕ',c:'#f5a623'},
+          'ВСЕ НА ПАУЗЕ':{l:'ПАУЗЕ',c:'#6b7280'},
+          'ПАУЗЕ':{l:'ПАУЗЕ',c:'#6b7280'},
           'ПРОВЕРЬ АККАУНТ':{l:'ПРОВЕРЬ',c:'#f5a623'},
           'ПРОВЕРЬ':{l:'ПРОВЕРЬ',c:'#f5a623'},
           'НЕТ СВЯЗИ':{l:'НЕТ СВЯЗИ',c:'#f05555'},
@@ -947,9 +955,16 @@ export default function Home() {
         const info = TS[a.tech_status]
         const frozen = FROZEN.includes(a.status)
         const hasMetrics = mt.today_cost>0 || mt.clicks>0
+        const note = a.tech_note || ''
+        const isRatio = /^\d+\/\d+$/.test(note)         // "2/5" у Крутит
+        const maybeBan = a.tech_status==='НЕТ СВЯЗИ' && (mt.today_cost>0 || mt.yest_cost>0)
         return (
-          <span className="cell-sm" style={{color:info?info.c:'var(--t3)',fontFamily:'JetBrains Mono'}}>
+          <span className="cell-sm" style={{color:info?info.c:'var(--t3)',fontFamily:'JetBrains Mono'}}
+                title={note && !isRatio ? note : undefined}>
             {info?info.l:(a.tech_status||'—')}
+            {note && isRatio && <span style={{opacity:.8}}> {note}</span>}
+            {note && !isRatio && <span style={{opacity:.8,fontSize:10}}> ({note.length>22?note.slice(0,22)+'…':note})</span>}
+            {maybeBan && <span className="ban-chip" title="Тратил и замолчал — возможно бан, проверь аккаунт">возможно бан</span>}
             {frozen && hasMetrics && <span title="Метрики приходят на замороженный аккаунт"> ⚠️</span>}
           </span>
         )
@@ -1142,6 +1157,13 @@ export default function Home() {
         .badge-dot{width:5px;height:5px;border-radius:50%;flex-shrink:0}
         .cell-sm{font-size:11px;color:var(--t2);max-width:120px;overflow:hidden;text-overflow:ellipsis;display:inline-block}
         .cell-edit{width:100%;background:var(--s1);border:1px solid var(--acc);border-radius:4px;padding:3px 6px;color:var(--t);font-size:12px;font-family:'Inter',sans-serif;outline:none}
+        .ban-chip{margin-left:6px;background:rgba(240,85,85,.15);border:1px solid rgba(240,85,85,.4);color:#f05555;font-size:9px;padding:1px 6px;border-radius:8px;font-family:'Inter',sans-serif;white-space:nowrap}
+        .camp-list{display:flex;flex-direction:column;gap:2px;margin-bottom:4px}
+        .camp-row{display:flex;align-items:center;gap:8px;padding:4px 8px;background:var(--s2);border:1px solid var(--bd);border-radius:5px;font-size:12px}
+        .camp-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+        .camp-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--t);font-family:'JetBrains Mono',monospace;font-size:11px}
+        .camp-st{font-size:11px;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis}
+        .camp-cost{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--t2);min-width:54px;text-align:right}
         .cell-sm.muted{color:var(--t3)}
         .frozen-row td{opacity:.6}
         tbody tr.active-row td{background:rgba(91,110,245,.12)}
@@ -1646,6 +1668,31 @@ export default function Home() {
             <div className="dr-body">
               {drawerTab === 'info' && (
                 <>
+                  {Array.isArray(drawer.campaigns_snapshot) && drawer.campaigns_snapshot.length > 0 && (
+                    <>
+                      <div className="dr-sec">Состояние кампаний{drawer.tech_status ? ` — ${drawer.tech_status}${drawer.tech_note?` (${drawer.tech_note})`:''}` : ''}</div>
+                      <div className="camp-list">
+                        {drawer.campaigns_snapshot.map((c, i) => {
+                          // приоритет вердикта: отклонено → пауза → крутит → бюджет → не крутит
+                          let st, col
+                          if (c.approval === 'DISAPPROVED') { st = 'отклонено'; col = '#f5a623' }
+                          else if (c.status === 'PAUSED') { st = 'пауза'; col = '#6b7280' }
+                          else if ((c.impressions_today > 0 || c.cost_today > 0)) { st = 'крутит'; col = '#22d17a' }
+                          else if ((c.primary_reasons || []).join(',').indexOf('BUDGET') >= 0) { st = 'бюджет'; col = '#f5a623' }
+                          else { st = 'не крутит'; col = 'var(--t3)' }
+                          return (
+                            <div key={i} className="camp-row">
+                              <span className="camp-dot" style={{background: col === 'var(--t3)' ? '#6b7280' : col}}/>
+                              <span className="camp-name" title={c.name}>{c.name}</span>
+                              <span className="camp-st" style={{color: col}}>{st}{c.approval==='DISAPPROVED' && c.reason ? ` · ${c.reason}` : ''}</span>
+                              <span className="camp-cost">{c.cost_today > 0 ? '$' + (+c.cost_today).toFixed(2) : '—'}</span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </>
+                  )}
+
                   <div className="dr-sec">Идентификация</div>
                   <div className="dr-grid">
                     <div className="fi"><label>Название</label><input value={editForm.name||''} onChange={e=>setEditForm({...editForm,name:e.target.value})}/></div>
