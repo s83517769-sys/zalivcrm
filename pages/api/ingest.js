@@ -40,6 +40,7 @@ export default async function handler(req, res) {
     try {
       const {
         name, google_ads_id, currency, tech_status,
+        tech_note, campaigns, hourly, account_timezone,
         today_cost, today_clicks, today_cpc, today_conv,
         yest_cost, yest_clicks, yest_cpc, yest_conv,
       } = item
@@ -88,6 +89,13 @@ export default async function handler(req, res) {
         account = data
       }
 
+      // Архивный аккаунт: запрос принимаем, но НЕ обновляем (статистика заморожена
+      // на моменте архивации; разархивация автоматически вернёт приём)
+      if (account.is_archived) {
+        results.push({ id: account.id, name: account.name, skipped: 'archived' })
+        continue
+      }
+
       // Обновляем tech_status и last_seen_at
       const isFrozen = terminalNames.includes(account.status)
       const overridden = Array.isArray(account.metrics_manual_override) ? account.metrics_manual_override : []
@@ -102,10 +110,19 @@ export default async function handler(req, res) {
       // Замороженный аккаунт: тех. статус скриптом не трогаем (метрики всё равно пишем ниже)
       if (!isFrozen) {
         if (tech_status) updates.tech_status = tech_status
-        // Автодата крута
-        if (tech_status === 'РАБОТАЕТ' && !account.crut_date) {
+        if ('tech_note' in account) updates.tech_note = tech_note || null
+        // Автодата крута (старый скрипт шлёт РАБОТАЕТ, новый — Крутит)
+        if ((tech_status === 'РАБОТАЕТ' || tech_status === 'Крутит') && !account.crut_date) {
           updates.crut_date = today
         }
+      }
+
+      // Детализация кампаний и пояс аккаунта (данные, не статус) — если колонки есть
+      if ('campaigns_snapshot' in account && Array.isArray(campaigns)) {
+        updates.campaigns_snapshot = campaigns
+      }
+      if ('account_timezone' in account && account_timezone) {
+        updates.account_timezone = account_timezone
       }
 
       // «Витринные» метрики на строке аккаунта — только если колонка существует
@@ -125,6 +142,32 @@ export default async function handler(req, res) {
         .update(updates)
         .eq('id', account.id)
       if (updErr) errors.push({ name, stage: 'account_update', error: updErr.message })
+
+      // Почасовой спенд → hourly_metrics (upsert по account+date+hour).
+      // Пустой/отсутствующий массив НИЧЕГО не трогает — молчание не обнуляет историю.
+      if (Array.isArray(hourly) && hourly.length > 0) {
+        const hourRows = hourly
+          .filter(h => h && h.date && h.hour != null && h.hour >= 0 && h.hour <= 23)
+          .map(h => ({
+            account_id: account.id,
+            user_id: USER_ID,
+            metric_date: h.date,
+            hour: h.hour,
+            account_timezone: account_timezone || null,
+            cost_native: +h.cost || 0,
+            currency: currency || account.currency || 'USD',
+            clicks: +h.clicks || 0,
+            conversions: +h.conversions || 0,
+            impressions: +h.impressions || 0,
+            updated_at: new Date().toISOString(),
+          }))
+        if (hourRows.length) {
+          const { error: hErr } = await supabaseAdmin
+            .from('hourly_metrics')
+            .upsert(hourRows, { onConflict: 'account_id,metric_date,hour' })
+          if (hErr) errors.push({ name, stage: 'hourly_upsert', error: hErr.message })
+        }
+      }
 
       // Метрики сегодня
       if (today_cost > 0 || today_clicks > 0) {
