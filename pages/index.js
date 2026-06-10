@@ -137,6 +137,12 @@ export default function Home() {
   const [accounts, setAccounts] = useState([])
   const [loading, setLoading] = useState(true)
   const [dark, setDark] = useState(true)
+  const [theme, setTheme] = useState('dark')     // light|dark|system
+  const [density, setDensity] = useState('cozy') // cozy|compact
+  const [activeId, setActiveId] = useState(null)  // навигация стрелками
+  const [showHelp, setShowHelp] = useState(false)
+  const searchRef = useRef(null)
+  const hkRef = useRef({})
   const [search, setSearch] = useState('')
   const [showAdd, setShowAdd] = useState(false)
   const [form, setForm] = useState(EMPTY_FORM)
@@ -226,7 +232,10 @@ export default function Home() {
 
   useEffect(() => {
     const t = localStorage.getItem('zcrm_theme')
-    if (t) setDark(t === 'dark')
+    if (t === 'light' || t === 'dark' || t === 'system') setTheme(t)
+    else if (t) setTheme(t === 'dark' ? 'dark' : 'light')
+    const d = localStorage.getItem('zcrm_density')
+    if (d === 'compact' || d === 'cozy') setDensity(d)
     try {
       const s = JSON.parse(localStorage.getItem('zcrm_table_settings') || '{}')
       if (Array.isArray(s.statusSel)) setStatusSel(s.statusSel)
@@ -257,9 +266,17 @@ export default function Home() {
     load()
   }, [])
 
+  // Тема: light/dark/system → эффективный dark (с подпиской на системную)
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    const apply = () => setDark(theme === 'system' ? mq.matches : theme === 'dark')
+    apply()
+    if (theme === 'system') { mq.addEventListener('change', apply); return () => mq.removeEventListener('change', apply) }
+  }, [theme])
+
   useEffect(() => { document.body.className = dark ? 'dark' : 'light' }, [dark])
 
-  // Горячие клавиши undo/redo. Нативный undo оставляем только в текстовых полях.
+  // Горячие клавиши. Ловим ТОЛЬКО вне текстовых полей (иначе «/» печаталось бы в инпут).
   useEffect(() => {
     const TEXT_TYPES = ['text','search','number','email','url','password','tel','date','datetime-local','month','week','time']
     function isTextField(t) {
@@ -268,14 +285,38 @@ export default function Home() {
       const tag = (t.tagName || '').toLowerCase()
       if (tag === 'textarea') return true
       if (tag === 'input') return TEXT_TYPES.includes((t.type || 'text').toLowerCase())
-      return false // <select>, checkbox, button и пр. — не текстовые, undo ловим
+      return false // <select>, checkbox, button и пр. — не текстовые
     }
     function onKey(e) {
       if (isTextField(e.target)) return
-      if (!(e.metaKey || e.ctrlKey)) return
-      const k = (e.key || '').toLowerCase()
-      if (k === 'z' && !e.shiftKey) { e.preventDefault(); doUndo() }
-      else if ((k === 'z' && e.shiftKey) || k === 'y') { e.preventDefault(); doRedo() }
+      const k = e.key
+      if (e.metaKey || e.ctrlKey) {
+        const lk = k.toLowerCase()
+        if (lk === 'z' && !e.shiftKey) { e.preventDefault(); doUndo() }
+        else if ((lk === 'z' && e.shiftKey) || lk === 'y') { e.preventDefault(); doRedo() }
+        return
+      }
+      const s = hkRef.current
+      if (k === '/') { e.preventDefault(); searchRef.current?.focus(); return }
+      if (k === '?') { e.preventDefault(); setShowHelp(h => !h); return }
+      if (k === 'Escape') {
+        if (s.drawerOpen) setDrawer(null)
+        else if (s.hasSelection) clearSelection()
+        else setShowHelp(false)
+        return
+      }
+      if (k === 'ArrowDown' || k === 'ArrowUp') {
+        if (!s.navRows.length) return
+        e.preventDefault()
+        const idx = s.navRows.findIndex(a => a.id === s.activeId)
+        let ni = idx < 0 ? 0 : idx + (k === 'ArrowDown' ? 1 : -1)
+        ni = Math.max(0, Math.min(s.navRows.length - 1, ni))
+        const nid = s.navRows[ni].id
+        setActiveId(nid)
+        requestAnimationFrame(() => document.getElementById('row-' + nid)?.scrollIntoView({ block: 'nearest' }))
+        return
+      }
+      if (k === 'Enter') { const row = s.navRows.find(a => a.id === s.activeId); if (row) openDrawer(row) }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -300,9 +341,18 @@ export default function Home() {
 
   useEffect(() => { setPage(1) }, [statusSel, geoSel, zalivSel, groupSel, funnelSel, formatSel, launchFrom, launchTo, search, pageSize, catFilter])
 
-  function toggleTheme() {
-    const n = !dark; setDark(n)
-    localStorage.setItem('zcrm_theme', n ? 'dark' : 'light')
+  function cycleTheme() {
+    const order = ['light', 'dark', 'system']
+    const next = order[(order.indexOf(theme) + 1) % 3]
+    setTheme(next)
+    localStorage.setItem('zcrm_theme', next)
+    if (dbReady.current) api('/api/users/settings', { method:'POST', body: JSON.stringify({ ui_theme: next }) }).catch(()=>{})
+  }
+  function toggleDensity() {
+    const next = density === 'cozy' ? 'compact' : 'cozy'
+    setDensity(next)
+    localStorage.setItem('zcrm_density', next)
+    if (dbReady.current) api('/api/users/settings', { method:'POST', body: JSON.stringify({ ui_density: next }) }).catch(()=>{})
   }
 
   async function load() {
@@ -332,6 +382,10 @@ export default function Home() {
       if (cc.visible) setColVisible({ ...defaultVisibleMap(), ...cc.visible })
       if (cc.widths) setColWidths(cc.widths)
     }
+    const ut = sData?.settings?.ui_theme
+    if (ut === 'light' || ut === 'dark' || ut === 'system') { setTheme(ut); localStorage.setItem('zcrm_theme', ut) }
+    const ud = sData?.settings?.ui_density
+    if (ud === 'compact' || ud === 'cozy') { setDensity(ud); localStorage.setItem('zcrm_density', ud) }
     dbReady.current = true // теперь правки колонок можно писать в БД
     setLoading(false)
     const now = new Date()
@@ -836,6 +890,9 @@ export default function Home() {
     setCollapsedGroups(s => s.includes(k) ? s.filter(x => x !== k) : [...s, k])
   }
 
+  // Текущее состояние для обработчика хоткеев (читается через ref, без устаревших замыканий)
+  hkRef.current = { navRows: displayed, activeId, drawerOpen: !!drawer, hasSelection: selectedIds.length > 0 }
+
   let matchedFields = []
   if (search) {
     const set = new Set()
@@ -939,8 +996,8 @@ export default function Home() {
         : (marks.stripe ? `inset 3px 0 0 ${marks.stripe}` : undefined),
     }
     return (
-      <tr key={a.id} className={a.is_frozen?'frozen-row':''} style={trStyle}
-          onClick={()=>{ if(rowDrag||editCell) return; clearTimeout(openTimer.current); openTimer.current=setTimeout(()=>openDrawer(a),180) }}
+      <tr key={a.id} id={'row-'+a.id} className={`${a.is_frozen?'frozen-row':''}${activeId===a.id?' active-row':''}`} style={trStyle}
+          onClick={()=>{ if(rowDrag||editCell) return; setActiveId(a.id); clearTimeout(openTimer.current); openTimer.current=setTimeout(()=>openDrawer(a),180) }}
           onDragOver={rowDrag ? (e=>{e.preventDefault();const r=e.currentTarget.getBoundingClientRect();const side=(e.clientY-r.top)<r.height/2?'top':'bottom';if(!rowOver||rowOver.id!==a.id||rowOver.side!==side)setRowOver({id:a.id,side})}) : undefined}
           onDrop={rowDrag ? (e=>{e.preventDefault();dropRow(a.id)}) : undefined}>
         <td className="chk-td" onClick={e=>e.stopPropagation()}>
@@ -1080,6 +1137,15 @@ export default function Home() {
         .cell-edit{width:100%;background:var(--s1);border:1px solid var(--acc);border-radius:4px;padding:3px 6px;color:var(--t);font-size:12px;font-family:'Inter',sans-serif;outline:none}
         .cell-sm.muted{color:var(--t3)}
         .frozen-row td{opacity:.6}
+        tbody tr.active-row td{background:rgba(91,110,245,.12)}
+        .app.compact td{padding:2px 8px}
+        .app.compact thead th{padding:4px 8px}
+        .app.compact .acc-sub{display:none}
+        .app.compact td{font-size:11px}
+        .hk-list{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
+        .hk-row{display:flex;align-items:center;gap:12px;font-size:13px;color:var(--t2)}
+        .hk-row kbd{font-family:'JetBrains Mono',monospace;font-size:11px;background:var(--s2);border:1px solid var(--bd2);border-radius:4px;padding:2px 8px;color:var(--t);min-width:96px;text-align:center}
+        .hk-note{font-size:11px;color:var(--t3);line-height:1.5}
         .group-row{cursor:pointer;background:var(--s2)}
         .group-row td{padding:6px 10px!important;border-bottom:1px solid var(--bd2);position:sticky}
         .group-row:hover td{background:var(--s3)}
@@ -1161,7 +1227,7 @@ export default function Home() {
 
       {loading && <div className="overlay"><div className="spin"></div><div style={{fontFamily:'JetBrains Mono',fontSize:12,color:'var(--t3)'}}>Загрузка...</div></div>}
 
-      <div className="app">
+      <div className={`app${density==='compact'?' compact':''}`}>
         {/* TOPBAR */}
         <div className="topbar">
           <div className="logo">Залив<em>CRM</em><span className="live">● live</span></div>
@@ -1176,7 +1242,7 @@ export default function Home() {
           <div className="sep"/>
           <div className="srch">
             <span className="srch-ic">⌕</span>
-            <input placeholder="Поиск по всем полям..." value={search} onChange={e=>setSearch(e.target.value)}/>
+            <input ref={searchRef} placeholder="Поиск по всем полям...  ( / )" value={search} onChange={e=>setSearch(e.target.value)}/>
             {search && (
               <div className="srch-hint">
                 {matchedFields.length ? `найдено по: ${matchedFields.join(', ')}` : 'ничего не найдено'}
@@ -1192,7 +1258,9 @@ export default function Home() {
           <div className="tb-acts">
             {syncTime && <span style={{fontSize:10,color:'var(--t3)',fontFamily:'JetBrains Mono'}}>обн. {syncTime}</span>}
             <button className="btn" onClick={load}>↻</button>
-            <button className="btn" onClick={toggleTheme}>{dark?'☀️':'🌙'}</button>
+            <button className="btn" onClick={cycleTheme} title={`Тема: ${theme==='light'?'светлая':theme==='dark'?'тёмная':'системная'}`}>{theme==='light'?'☀️':theme==='dark'?'🌙':'🖥'}</button>
+            <button className="btn" onClick={toggleDensity} title={`Плотность: ${density==='compact'?'компактная':'обычная'}`}>{density==='compact'?'≣':'≡'}</button>
+            <button className="btn" onClick={()=>setShowHelp(true)} title="Горячие клавиши (?)">⌨</button>
             <button className="btn" onClick={()=>setShowBulk(true)}>📋 Массовое</button>
             <button className="btn btn-acc" onClick={()=>setShowAdd(true)}>+ Аккаунт</button>
             <div className="sep"/>
@@ -1776,6 +1844,32 @@ export default function Home() {
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* HOTKEYS HELP */}
+      {showHelp && (
+        <div className="modal-bg" onClick={()=>setShowHelp(false)} style={{zIndex:700}}>
+          <div className="modal" onClick={e=>e.stopPropagation()} style={{width:420}}>
+            <h2>Горячие клавиши</h2>
+            <div className="hk-list">
+              {[
+                ['/', 'Фокус в поиск'],
+                ['↑ / ↓', 'Навигация по строкам'],
+                ['Enter', 'Открыть карточку активной строки'],
+                ['Esc', 'Закрыть карточку / снять выделение / подсказку'],
+                ['Ctrl/⌘ + Z', 'Отменить'],
+                ['Ctrl/⌘ + ⇧ + Z', 'Повторить'],
+                ['?', 'Показать/скрыть эту подсказку'],
+              ].map(([k,d])=>(
+                <div key={k} className="hk-row"><kbd>{k}</kbd><span>{d}</span></div>
+              ))}
+            </div>
+            <div className="hk-note">Хоткеи работают вне текстовых полей — в инпуте они печатаются как обычно.</div>
+            <div className="modal-acts" style={{borderTop:'none',paddingTop:4}}>
+              <button className="btn" onClick={()=>setShowHelp(false)}>Закрыть</button>
+            </div>
           </div>
         </div>
       )}
