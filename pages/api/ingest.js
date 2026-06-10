@@ -7,9 +7,8 @@ export default async function handler(req, res) {
   const key = req.headers['x-api-key'] || req.body?.api_key
   const user = await getUserIdByApiKey(key)
   if (!user) return res.status(401).json({ error: 'Invalid API key' })
-  if (user.plan === 'trial' && user.trial_ends_at && new Date(user.trial_ends_at) < new Date()) {
-    return res.status(403).json({ error: 'Trial expired' })
-  }
+  // Триал-гейт убран: биллинга ещё нет, а проверка блокировала приём данных
+  // (plan='trial' + trial_ends_at в прошлом по дефолтам схемы). Вернём при вводе биллинга.
   const USER_ID = user.id
 
   const { batch } = req.body
