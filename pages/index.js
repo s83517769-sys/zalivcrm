@@ -363,7 +363,26 @@ export default function Home() {
       api('/api/metrics-summary'),
       api('/api/users/settings'),
     ])
-    setAccounts(data.accounts || [])
+    const accs = data.accounts || []
+    setAccounts(accs)
+    // Если у пользователя есть ручной порядок — дописать в конец новые id, которых там ещё нет.
+    // Стабильный порядок дописывания: по created_at, затем id. Сам ручной порядок не трогаем.
+    setRowOrder(prev => {
+      if (!Array.isArray(prev) || prev.length === 0) return prev
+      const known = new Set(prev)
+      const tail = accs
+        .filter(a => !known.has(a.id))
+        .sort((a, b) => {
+          const ta = a.created_at || '', tb = b.created_at || ''
+          if (ta !== tb) return ta < tb ? -1 : 1
+          return String(a.id).localeCompare(String(b.id))
+        })
+        .map(a => a.id)
+      if (tail.length === 0) return prev
+      const next = [...prev, ...tail]
+      try { localStorage.setItem('zcrm_row_order', JSON.stringify(next)) } catch {}
+      return next
+    })
     setMetricsSummary(mData.summary || {})
     if (Array.isArray(sData?.settings?.custom_statuses) && sData.settings.custom_statuses.length) {
       setStatusDefs(sData.settings.custom_statuses)
@@ -796,10 +815,18 @@ export default function Home() {
     return categoryOf(a.status) === catFilter
   }).sort((a, b) => {
     if (sort.key === 'custom') {
+      // 1) Ручной порядок (rowOrder): кто в нём — впереди по своему индексу.
+      // 2) Фолбэк для «бездомных» (нет в rowOrder, sort_order=null): детерминированно
+      //    по created_at, затем по id — total-order без равных ключей, ни одна строка
+      //    не «дрейфует» и не пропадает на пагинации.
       const ia = rowOrder.indexOf(a.id), ib = rowOrder.indexOf(b.id)
-      const ra = ia < 0 ? Number.MAX_SAFE_INTEGER : ia
-      const rb = ib < 0 ? Number.MAX_SAFE_INTEGER : ib
-      return ra - rb
+      const inA = ia >= 0, inB = ib >= 0
+      if (inA && inB) return ia - ib
+      if (inA) return -1
+      if (inB) return 1
+      const ta = a.created_at || '', tb = b.created_at || ''
+      if (ta !== tb) return ta < tb ? -1 : 1
+      return String(a.id).localeCompare(String(b.id))
     }
     const va = sortVal(sort.key, a, metricsSummary)
     const vb = sortVal(sort.key, b, metricsSummary)
