@@ -1166,16 +1166,17 @@ export default function Home() {
         .chip.act{background:rgba(91,110,245,.15);border-color:var(--acc);color:var(--acc)}
         .date-inp{background:var(--s2);border:1px solid var(--bd);border-radius:4px;padding:3px 6px;font-size:11px;color:var(--t);outline:none;font-family:'Inter',sans-serif}
         .tbl-wrap{flex:1;overflow:auto}
-        table{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed}
+        table{width:100%;border-collapse:separate;border-spacing:0;font-size:12px;table-layout:fixed}
         .col-resize{position:absolute;top:0;right:0;width:6px;height:100%;cursor:col-resize;user-select:none}
         .col-resize:hover{background:var(--acc)}
-        thead th{position:sticky;top:0;background:var(--s2);padding:7px 9px;text-align:left;font-size:10px;color:var(--t3);font-weight:500;letter-spacing:.05em;text-transform:uppercase;border-bottom:1px solid var(--bd);white-space:nowrap;z-index:10;cursor:grab;user-select:none}
+        thead th{position:sticky;top:0;background:var(--s2);padding:7px 9px;text-align:left;font-size:10px;color:var(--t3);font-weight:500;letter-spacing:.05em;text-transform:uppercase;border-bottom:1px solid var(--bd);white-space:nowrap;z-index:20;cursor:grab;user-select:none}
         thead th:hover{color:var(--t)}
         thead th:active{cursor:grabbing}
         thead th.r{text-align:right}
         thead th .arr{color:var(--acc);margin-left:3px}
-        tbody tr{border-bottom:1px solid var(--bd);cursor:pointer;transition:background .07s}
+        tbody tr{cursor:pointer;transition:background .07s}
         tbody tr:hover td{background:var(--s2)}
+        .tbl-wrap tbody td{border-bottom:1px solid var(--bd)}
         td{padding:6px 9px;vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
         td.r{text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px}
         .acc-name{font-family:'JetBrains Mono',monospace;font-weight:500;font-size:12px;color:var(--t)}
@@ -1203,7 +1204,7 @@ export default function Home() {
         .hk-row kbd{font-family:'JetBrains Mono',monospace;font-size:11px;background:var(--s2);border:1px solid var(--bd2);border-radius:4px;padding:2px 8px;color:var(--t);min-width:96px;text-align:center}
         .hk-note{font-size:11px;color:var(--t3);line-height:1.5}
         .group-row{cursor:pointer;background:var(--s2)}
-        .group-row td{padding:6px 10px!important;border-bottom:1px solid var(--bd2);position:sticky}
+        .tbl-wrap tbody .group-row td{padding:6px 10px!important;border-bottom:1px solid var(--bd2)}
         .group-row:hover td{background:var(--s3)}
         .grp-tog{display:inline-block;width:14px;color:var(--t3)}
         .group-row b{color:var(--t);font-size:12px}
