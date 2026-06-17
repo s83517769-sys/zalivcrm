@@ -175,6 +175,7 @@ export default function Home() {
 
   // ── Выделение / массовые действия ──
   const [selectedIds, setSelectedIds] = useState([])
+  const [selAnchorId, setSelAnchorId] = useState(null)   // якорь для Shift+click (последняя «не-shift» строка)
   const [bulkBar, setBulkBar] = useState({ zalivshik:'', geo:'' })
   const [confirmDialog, setConfirmDialog] = useState(null) // { msg, onYes }
 
@@ -620,8 +621,41 @@ export default function Home() {
     const allSel = ids.length > 0 && ids.every(id => selectedIds.includes(id))
     setSelectedIds(s => allSel ? s.filter(id => !ids.includes(id)) : [...new Set([...s, ...ids])])
   }
-  function selectAllFiltered(ids) { setSelectedIds(ids) }
-  function clearSelection() { setSelectedIds([]) }
+  function selectAllFiltered(ids) { setSelectedIds(ids); setSelAnchorId(ids[ids.length - 1] || null) }
+  function clearSelection() { setSelectedIds([]); setSelAnchorId(null) }
+
+  // Клик по чекбоксу строки. Поддерживает Shift (диапазон) и Cmd/Ctrl (toggle одной строки).
+  // Диапазон считается ПО ВИЗУАЛЬНОМУ порядку (displayed) — с учётом текущей сортировки/фильтра/группировки.
+  function handleSelectClick(e, id) {
+    const isShift = e.shiftKey
+    const isMeta  = e.metaKey || e.ctrlKey
+    if (isShift && selAnchorId && selAnchorId !== id) {
+      const order = displayed.map(a => a.id)
+      let i1 = order.indexOf(selAnchorId)
+      let i2 = order.indexOf(id)
+      if (i1 < 0 || i2 < 0) {
+        // якорь не в текущем виде → откатываемся на обычный toggle
+        toggleSelect(id)
+        setSelAnchorId(id)
+        return
+      }
+      if (i1 > i2) [i1, i2] = [i2, i1]
+      const range = order.slice(i1, i2 + 1)
+      // ВЫДЕЛЯЕМ диапазон (не toggle): добавляем то, чего нет, прочие выделения за пределами сохраняем.
+      // Порядок в selectedIds — визуальный для строк диапазона; так групповой drag и копирование лягут по визуалу.
+      setSelectedIds(s => {
+        const set = new Set(s)
+        const next = s.slice()
+        for (const rid of range) if (!set.has(rid)) { next.push(rid); set.add(rid) }
+        return next
+      })
+      // Якорь НЕ обновляем — чтобы можно было расширять диапазон следующим Shift+click от той же исходной строки.
+      return
+    }
+    // Cmd/Ctrl или обычный клик — toggle одиночный (как раньше). Якорь обновляется в обоих случаях.
+    toggleSelect(id)
+    setSelAnchorId(id)
+  }
 
   async function bulkUpdate(changes, { confirm: confirmMsg, label } = {}) {
     if (selectedIds.length === 0) return
@@ -1124,7 +1158,9 @@ export default function Home() {
           onDragOver={rowDrag ? (e=>{e.preventDefault();const r=e.currentTarget.getBoundingClientRect();const side=(e.clientY-r.top)<r.height/2?'top':'bottom';if(!rowOver||rowOver.id!==a.id||rowOver.side!==side)setRowOver({id:a.id,side})}) : undefined}
           onDrop={rowDrag ? (e=>{e.preventDefault();dropRow(a.id)}) : undefined}>
         <td className="chk-td" onClick={e=>e.stopPropagation()}>
-          <input type="checkbox" checked={selectedIds.includes(a.id)} onChange={()=>toggleSelect(a.id)} onClick={e=>e.stopPropagation()}/>
+          <input type="checkbox" checked={selectedIds.includes(a.id)}
+                 onChange={()=>{/* state ведём через onClick, чтобы поймать Shift/Ctrl-модификаторы */}}
+                 onClick={e=>{e.stopPropagation(); e.preventDefault(); handleSelectClick(e, a.id)}}/>
         </td>
         {visibleCols.map(c=>{
           const isStatus = c.key==='status'
