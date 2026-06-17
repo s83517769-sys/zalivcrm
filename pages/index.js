@@ -655,10 +655,45 @@ export default function Home() {
       },
     })
   }
-  function copySelected(field, label) {
-    const vals = accounts.filter(a => selectedIds.includes(a.id)).map(a => a[field] || '').filter(Boolean).join('\n')
+  // Унифицированное копирование: если ctx (строка из попапа) есть и она в выделении,
+  // или ctx нет (вызов из bulkbar) — работаем по selectedIds. Иначе по одной ctx-строке.
+  function copyTargets(ctx) {
+    const ids = (ctx && selectedIds.includes(ctx.id)) || !ctx
+      ? selectedIds
+      : [ctx.id]
+    return ids.map(id => accounts.find(x => x.id === id)).filter(Boolean)
+  }
+  function copyField(field, label, ctx) {
+    const accs = copyTargets(ctx)
+    if (accs.length === 0) return
+    const vals = accs.map(a => a[field] || '').filter(Boolean).join('\n')
     if (navigator.clipboard?.writeText) navigator.clipboard.writeText(vals)
-    showToast(`Скопировано: ${label}`)
+    setCopyPopup(null)
+    if (!vals) { showToast('Пусто: ' + label); return }
+    showToast(accs.length > 1 ? `Скопировано ${accs.length}: ${label}` : 'Скопировано: ' + label)
+  }
+  // Совместимость: оставляю copySelected как обёртку для существующих вызовов из bulkbar
+  function copySelected(field, label) { copyField(field, label, null) }
+
+  function copyPack(ctx) {
+    const accs = copyTargets(ctx)
+    if (accs.length === 0) return
+    const HEADERS = ['Название','Google Ads ID','White','Black UTM','Google Tag','CLO']
+    const FIELDS  = ['name','google_ads_id','link','black','google_tag','clo_url']
+    let text
+    if (accs.length === 1) {
+      // Одна строка → блок «поле: значение» как раньше
+      const a = accs[0]
+      text = HEADERS.map((h, i) => `${h}: ${a[FIELDS[i]] || ''}`).join('\n')
+    } else {
+      // Пачка → TSV-таблица для Sheets/Excel (ячейки через TAB, строки через перенос)
+      const safe = (v) => String(v || '').replace(/[\t\r\n]/g, ' ')
+      const lines = [HEADERS.join('\t'), ...accs.map(a => FIELDS.map(f => safe(a[f])).join('\t'))]
+      text = lines.join('\n')
+    }
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text)
+    setCopyPopup(null)
+    showToast(accs.length > 1 ? `Скопировано ${accs.length}: всё (таблица)` : 'Скопировано: всё')
   }
   function exportCSV(cols) {
     const rows = accounts.filter(a => selectedIds.includes(a.id))
@@ -686,24 +721,6 @@ export default function Home() {
     showToast(`CSV: ${rows.length} строк`)
   }
 
-  function copyText(text, label) {
-    const t = text || ''
-    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(t)
-    setCopyPopup(null)
-    showToast(t ? 'Скопировано: ' + label : 'Пусто: ' + label)
-  }
-
-  function copyAll(a) {
-    const block = [
-      `Название: ${a.name||''}`,
-      `Google Ads ID: ${a.google_ads_id||''}`,
-      `White: ${a.link||''}`,
-      `Black UTM: ${a.black||''}`,
-      `Google Tag: ${a.google_tag||''}`,
-      `CLO: ${a.clo_url||''}`,
-    ].join('\n')
-    copyText(block, 'всё')
-  }
 
   // ── Массовое добавление ──
   function bulkParse() {
@@ -1564,8 +1581,24 @@ export default function Home() {
                 <input className="bb-inp" placeholder="Гео…" value={bulkBar.geo} onChange={e=>setBulkBar({...bulkBar,geo:e.target.value})}
                        onKeyDown={e=>{if(e.key==='Enter'&&bulkBar.geo.trim()){bulkUpdate({geo:bulkBar.geo.trim()},{label:'Гео обновлено'});setBulkBar({...bulkBar,geo:''})}}}/>
                 <div className="bb-sep"/>
-                <button className="btn" onClick={()=>copySelected('name','названия')}>⎘ Названия</button>
-                <button className="btn" onClick={()=>copySelected('google_ads_id','Google Ads ID')}>⎘ ID</button>
+                <button className="btn" onClick={()=>copyField('name','названия',null)}>⎘ Названия</button>
+                <button className="btn" onClick={()=>copyField('google_ads_id','Google Ads ID',null)}>⎘ ID</button>
+                <select className="ssel" value="" onChange={e=>{
+                  const v = e.target.value; if (!v) return
+                  if (v === 'link')        copyField('link','White ссылки',null)
+                  else if (v === 'black')  copyField('black','Black UTM',null)
+                  else if (v === 'tag')    copyField('google_tag','Google Tag',null)
+                  else if (v === 'clo')    copyField('clo_url','CLO',null)
+                  else if (v === 'all')    copyPack(null)
+                  e.target.value = ''
+                }} title="Скопировать другое поле">
+                  <option value="">⎘ Ещё…</option>
+                  <option value="link">White ссылки</option>
+                  <option value="black">Black UTM</option>
+                  <option value="tag">Google Tag</option>
+                  <option value="clo">CLO</option>
+                  <option value="all">Всё (таблица для Sheets)</option>
+                </select>
                 <button className="btn" onClick={()=>exportCSV(visibleCols)}>⬇ CSV</button>
                 <div className="bb-sep"/>
                 <button className="btn btn-del" onClick={bulkArchive}>🗄 В архив</button>
@@ -1718,16 +1751,21 @@ export default function Home() {
       {/* COPY POPUP */}
       {copyPopup && (() => {
         const a = accounts.find(x => x.id === copyPopup.id) || {}
+        // Если строка отмечена — копируем по всем выделенным; иначе по одной.
+        const bulk = selectedIds.includes(a.id) && selectedIds.length > 1
+        const N = bulk ? selectedIds.length : 1
+        const suffix = bulk ? ` (${N})` : ''
         return (
           <div style={{position:'fixed',inset:0,zIndex:399}} onClick={()=>setCopyPopup(null)}>
-            <div className="status-popup" style={{left:Math.min(copyPopup.x,window.innerWidth-200),top:Math.min(copyPopup.y+4,window.innerHeight-280)}}>
-              <div className="sp-item" onClick={e=>{e.stopPropagation();copyText(a.name,'название')}}>Копировать название</div>
-              <div className="sp-item" onClick={e=>{e.stopPropagation();copyText(a.google_ads_id,'Google Ads ID')}}>Копировать Google Ads ID</div>
-              <div className="sp-item" onClick={e=>{e.stopPropagation();copyText(a.link,'White ссылку')}}>Копировать White ссылку</div>
-              <div className="sp-item" onClick={e=>{e.stopPropagation();copyText(a.black,'Black UTM')}}>Копировать Black UTM</div>
-              <div className="sp-item" onClick={e=>{e.stopPropagation();copyText(a.google_tag,'Google Tag')}}>Копировать Google Tag</div>
-              <div className="sp-item" onClick={e=>{e.stopPropagation();copyText(a.clo_url,'CLO')}}>Копировать CLO</div>
-              <div className="sp-item" style={{borderTop:'1px solid var(--bd)',marginTop:3,paddingTop:7,color:'var(--acc)'}} onClick={e=>{e.stopPropagation();copyAll(a)}}>⎘ Копировать всё</div>
+            <div className="status-popup" style={{left:Math.min(copyPopup.x,window.innerWidth-220),top:Math.min(copyPopup.y+4,window.innerHeight-320)}}>
+              {bulk && <div style={{padding:'4px 10px 6px',fontSize:10,color:'var(--t3)',textTransform:'uppercase',letterSpacing:'.05em'}}>{N} выделенных</div>}
+              <div className="sp-item" onClick={e=>{e.stopPropagation();copyField('name','название'+suffix,a)}}>Копировать название{suffix}</div>
+              <div className="sp-item" onClick={e=>{e.stopPropagation();copyField('google_ads_id','Google Ads ID'+suffix,a)}}>Копировать Google Ads ID{suffix}</div>
+              <div className="sp-item" onClick={e=>{e.stopPropagation();copyField('link','White ссылку'+suffix,a)}}>Копировать White ссылку{suffix}</div>
+              <div className="sp-item" onClick={e=>{e.stopPropagation();copyField('black','Black UTM'+suffix,a)}}>Копировать Black UTM{suffix}</div>
+              <div className="sp-item" onClick={e=>{e.stopPropagation();copyField('google_tag','Google Tag'+suffix,a)}}>Копировать Google Tag{suffix}</div>
+              <div className="sp-item" onClick={e=>{e.stopPropagation();copyField('clo_url','CLO'+suffix,a)}}>Копировать CLO{suffix}</div>
+              <div className="sp-item" style={{borderTop:'1px solid var(--bd)',marginTop:3,paddingTop:7,color:'var(--acc)'}} onClick={e=>{e.stopPropagation();copyPack(a)}}>⎘ Копировать всё{bulk ? ' (таблица)' : ''}</div>
             </div>
           </div>
         )
