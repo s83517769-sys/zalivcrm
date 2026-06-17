@@ -8,19 +8,64 @@ export default async function handler(req, res) {
   const USER_ID = await getUserIdFromRequest(req)
   if (!USER_ID) return res.status(401).json({ error: 'Unauthorized' })
 
-  // Часовой пояс пользователя
+  // Настройки: пояс пользователя + режим спенда (по умолчанию false — как в Google Ads)
   let userTz = DEFAULT_TZ
+  let spendByUserTz = false
   try {
     const { data: us } = await supabaseAdmin
       .from('user_settings')
-      .select('user_timezone')
+      .select('*')
       .eq('user_id', USER_ID)
       .maybeSingle()
     if (us?.user_timezone && DateTime.local().setZone(us.user_timezone).isValid) {
       userTz = us.user_timezone
     }
+    spendByUserTz = us?.spend_by_user_tz === true
   } catch {}
 
+  // ── Режим OFF (по умолчанию): спенд как в Google Ads — легаси-поля из accounts ──
+  if (!spendByUserTz) {
+    const { data: accs, error } = await supabaseAdmin
+      .from('accounts')
+      .select('*')
+      .eq('user_id', USER_ID)
+    if (error) return res.status(500).json({ error: error.message })
+
+    const summary = {}
+    for (const a of (accs || [])) {
+      const entry = { currency: a.currency || 'USD' }
+      const hasToday = a.today_cost != null || a.today_clicks != null || a.today_conv != null
+      const hasYest  = a.yest_cost  != null || a.yest_clicks  != null || a.yest_conv  != null
+      if (hasToday) {
+        const cost = +a.today_cost || 0
+        const clicks = +a.today_clicks || 0
+        const conv = +a.today_conv || 0
+        entry.today = {
+          cost_usd: Math.round(cost * 100) / 100,           // имя историческое; нативная валюта
+          clicks,
+          conversions: Math.round(conv * 100) / 100,
+          cpc_usd: +a.today_cpc || (clicks > 0 ? Math.round(cost / clicks * 10000) / 10000 : 0),
+          cpa: conv > 0 ? Math.round(cost / conv * 100) / 100 : 0,
+        }
+      }
+      if (hasYest) {
+        const cost = +a.yest_cost || 0
+        const clicks = +a.yest_clicks || 0
+        const conv = +a.yest_conv || 0
+        entry.yesterday = {
+          cost_usd: Math.round(cost * 100) / 100,
+          clicks,
+          conversions: Math.round(conv * 100) / 100,
+          cpc_usd: +a.yest_cpc || (clicks > 0 ? Math.round(cost / clicks * 10000) / 10000 : 0),
+          cpa: conv > 0 ? Math.round(cost / conv * 100) / 100 : 0,
+        }
+      }
+      summary[a.id] = entry
+    }
+    return res.status(200).json({ summary, user_timezone: userTz, spend_by_user_tz: false })
+  }
+
+  // ── Режим ON: пересборка из hourly_metrics под user_timezone (предыдущая логика) ──
   const nowU = DateTime.now().setZone(userTz)
   const todayU = nowU.toISODate()
   const yesterdayU = nowU.minus({ days: 1 }).toISODate()
@@ -38,7 +83,7 @@ export default async function handler(req, res) {
     return summary[id]
   }
 
-  // ── 1. Аккаунты с почасовыми данными: пересборка под пояс пользователя ──
+  // 1. Аккаунты с почасовыми данными — пересборка под пояс пользователя.
   // Окно в 3 даты по поясу аккаунта покрывает любые смещения (-12..+14) и DST.
   const sinceDate = nowU.minus({ days: 2 }).toISODate()
   const hourlyAccounts = new Set()
@@ -74,7 +119,7 @@ export default async function handler(req, res) {
       const entry = ensure(accId)
       for (const [key, b] of Object.entries(periods)) {
         entry[key] = {
-          cost_usd: Math.round(b.cost * 100) / 100,       // имя поля историческое; значение в нативной валюте
+          cost_usd: Math.round(b.cost * 100) / 100,
           clicks: b.clicks,
           conversions: Math.round(b.conversions * 100) / 100,
           cpc_usd: b.clicks > 0 ? Math.round(b.cost / b.clicks * 10000) / 10000 : 0,
@@ -86,7 +131,7 @@ export default async function handler(req, res) {
     console.error('hourly summary error:', e)
   }
 
-  // ── 2. Фолбэк для аккаунтов на старом скрипте: daily_metrics как раньше ──
+  // 2. Фолбэк для аккаунтов на старом скрипте — daily_metrics как раньше
   const todayLegacy = new Date().toISOString().split('T')[0]
   const yesterdayLegacy = new Date(Date.now() - 86400000).toISOString().split('T')[0]
   const { data, error } = await supabaseAdmin
@@ -104,5 +149,5 @@ export default async function handler(req, res) {
     else entry.yesterday = row
   }
 
-  return res.status(200).json({ summary, user_timezone: userTz })
+  return res.status(200).json({ summary, user_timezone: userTz, spend_by_user_tz: true })
 }

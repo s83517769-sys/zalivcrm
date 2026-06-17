@@ -19,17 +19,27 @@ export default async function handler(req, res) {
       .limit(365)
     if (error) return res.status(500).json({ error: error.message })
 
-    // Дни из часов под пояс пользователя — точнее дневной таблицы, перекрывают её
-    const byDate = {}
-    for (const r of (data || [])) byDate[r.metric_date] = r
+    // Если режим «спенд по поясу пользователя» ВЫКЛЮЧЕН — отдаём daily_metrics как есть (по поясу аккаунта)
+    let userTz = DEFAULT_TZ
+    let spendByUserTz = false
     try {
-      let userTz = DEFAULT_TZ
       const { data: us } = await supabaseAdmin
         .from('user_settings')
-        .select('user_timezone')
+        .select('user_timezone, spend_by_user_tz')
         .eq('user_id', USER_ID)
         .maybeSingle()
       if (us?.user_timezone && DateTime.local().setZone(us.user_timezone).isValid) userTz = us.user_timezone
+      spendByUserTz = us?.spend_by_user_tz === true
+    } catch {}
+
+    if (!spendByUserTz) {
+      return res.status(200).json({ metrics: data || [] })
+    }
+
+    // Режим ON: дни из часов под пояс пользователя — точнее дневной таблицы, перекрывают её
+    const byDate = {}
+    for (const r of (data || [])) byDate[r.metric_date] = r
+    try {
 
       const since = DateTime.now().setZone(userTz).minus({ days: 92 }).toISODate()
       const { data: hours } = await supabaseAdmin

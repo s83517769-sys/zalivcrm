@@ -27,6 +27,7 @@ export default function Settings() {
   const [watchdogHours, setWatchdogHours] = useState(2)
   const [userTz, setUserTz] = useState('Asia/Nicosia')
   const [tzSaving, setTzSaving] = useState(false)
+  const [spendByUserTz, setSpendByUserTz] = useState(false)
   const [rowRules, setRowRules] = useState([])
   const [rates, setRates] = useState({ USD:1 })
   const [newRate, setNewRate] = useState({ cur:'', val:'' })
@@ -57,6 +58,7 @@ export default function Settings() {
       setRowRules(s.settings.row_rules || [])
       setRates({ USD:1, ...(s.settings.currency_rates || {}) })
       if (s.settings.user_timezone) setUserTz(s.settings.user_timezone)
+      setSpendByUserTz(s.settings.spend_by_user_tz === true)
     }
     setAccounts(a.accounts || [])
   }
@@ -194,6 +196,11 @@ export default function Settings() {
     const ok = await saveSettings({ user_timezone: tz })
     setTzSaving(false)
     if (ok) showToast('Часовой пояс сохранён ✓ — спенд пересчитан')
+  }
+  async function toggleSpendByUserTz(on) {
+    setSpendByUserTz(on)
+    const ok = await saveSettings({ spend_by_user_tz: on })
+    if (ok) showToast(on ? 'Спенд по вашему поясу ✓' : 'Спенд как в Google Ads ✓')
   }
   function autoTz() {
     try {
@@ -472,6 +479,17 @@ export default function Settings() {
           </div>
           <div className="hint" style={{marginTop:8}}>
             Сейчас в этом поясе: {(() => { try { return new Date().toLocaleString('ru', { timeZone: userTz, day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) } catch { return '—' } })()}
+          </div>
+          <div style={{marginTop:14,paddingTop:12,borderTop:'1px solid var(--bd)'}}>
+            <label style={{display:'flex',alignItems:'flex-start',gap:10,cursor:'pointer'}}>
+              <input type="checkbox" checked={spendByUserTz} onChange={e=>toggleSpendByUserTz(e.target.checked)} style={{marginTop:3}}/>
+              <span>
+                <div style={{fontSize:13,color:'var(--t)',fontWeight:500}}>Спенд по моему часовому поясу</div>
+                <div className="hint" style={{marginTop:3}}>
+                  Выкл — спенд как в Google Ads (по поясу аккаунта). Вкл — пересчёт по вашему часовому поясу из почасовых данных.
+                </div>
+              </span>
+            </label>
           </div>
         </div>
 
