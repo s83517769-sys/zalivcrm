@@ -277,6 +277,44 @@ export default function Home() {
 
   useEffect(() => { document.body.className = dark ? 'dark' : 'light' }, [dark])
 
+  // Автоскролл .tbl-wrap при drag&drop СТРОК (rowDrag), не колонок.
+  // Активен только пока тащим строку и курсор у верхнего/нижнего края области таблицы
+  // (зона ~60px, шире у самого края — быстрее). Зона верха отсчитывается ПОД sticky-шапкой,
+  // чтобы автоскролл не конфликтовал с закреплённым thead. dropRow/zcrm_row_order не трогаем.
+  useEffect(() => {
+    if (!rowDrag) return
+    const wrap = document.querySelector('.tbl-wrap')
+    if (!wrap) return
+    const EDGE = 60     // px от края — зона активации
+    const MAX = 18      // макс шаг (px/кадр), ~60 fps → плавно
+    let mouseY = null
+    let raf = null
+    const onMove = (e) => { mouseY = e.clientY }
+    const tick = () => {
+      if (mouseY != null) {
+        const rect = wrap.getBoundingClientRect()
+        const head = wrap.querySelector('thead')
+        const headerH = head ? head.getBoundingClientRect().height : 0
+        const topZone = rect.top + headerH
+        const botZone = rect.bottom
+        if (mouseY < topZone + EDGE) {
+          const k = (topZone + EDGE - mouseY) / EDGE         // 0..1, чем ближе к краю — тем больше
+          wrap.scrollTop -= Math.max(2, Math.min(MAX, k * MAX))
+        } else if (mouseY > botZone - EDGE) {
+          const k = (mouseY - (botZone - EDGE)) / EDGE
+          wrap.scrollTop += Math.max(2, Math.min(MAX, k * MAX))
+        }
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    document.addEventListener('dragover', onMove)
+    raf = requestAnimationFrame(tick)
+    return () => {
+      document.removeEventListener('dragover', onMove)
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [rowDrag])
+
   // Горячие клавиши. Ловим ТОЛЬКО вне текстовых полей (иначе «/» печаталось бы в инпут).
   useEffect(() => {
     const TEXT_TYPES = ['text','search','number','email','url','password','tel','date','datetime-local','month','week','time']
