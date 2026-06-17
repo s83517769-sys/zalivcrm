@@ -32,6 +32,16 @@ const EDITABLE = {
 }
 const COMBO_FIELDS = ['geo','funnel','creo','card','zalivshik']
 
+// Категории статусов (должны совпадать с settings.js)
+const STATUS_CATEGORIES = [
+  { k:'active',   l:'Актив',    c:'#22d17a' },
+  { k:'problem',  l:'Проблема', c:'#f5a623' },
+  { k:'terminal', l:'Терминал', c:'#f05555' },
+  { k:'neutral',  l:'Нейтр.',   c:'#6b7280' },
+]
+const STATUS_PALETTE = ['#22d17a','#4ea8de','#5b6ef5','#c084fc','#f472b6','#f5a623','#f05555','#6b7280']
+const statusSlug = (s) => (s || '').toLowerCase().replace(/[^a-zа-я0-9]+/gi, '_').replace(/^_+|_+$/g, '') || ('st_' + Date.now())
+
 // Реестр всех колонок таблицы
 const ALL_COLUMNS = [
   { key:'name',       label:'Аккаунт',    width:150, align:'l' },
@@ -158,6 +168,7 @@ export default function Home() {
   const redoRef = useRef([])
   const [syncTime, setSyncTime] = useState('')
   const [statusPopup, setStatusPopup] = useState(null)
+  const [statusCreate, setStatusCreate] = useState(null) // { name, color, category } | null
   const [metricsSummary, setMetricsSummary] = useState({})
   const [copyPopup, setCopyPopup] = useState(null)
   const [statusDefs, setStatusDefs] = useState(DEFAULT_STATUSES)
@@ -484,6 +495,27 @@ export default function Home() {
     setShowAdd(false)
     showToast('Аккаунт добавлен ✓')
     setSaving(false)
+  }
+
+  async function createAndApplyStatus(accId) {
+    const name = (statusCreate?.name || '').trim()
+    if (!name) { showToast('Введи название статуса'); return }
+    if (statusDefs.some(s => s.name.toLowerCase() === name.toLowerCase())) {
+      // Если такой уже есть — просто применим его, без дублей в списке
+      const exists = statusDefs.find(s => s.name.toLowerCase() === name.toLowerCase())
+      setStatusCreate(null)
+      setStatusPopup(null)
+      return quickStatus(accId, exists.name)
+    }
+    let id = statusSlug(name)
+    while (statusDefs.some(s => s.id === id)) id += '_'
+    const def = { id, name, color: statusCreate.color || '#5b6ef5', category: statusCreate.category || 'active' }
+    const next = [...statusDefs, def]
+    setStatusDefs(next)
+    setStatusCreate(null)
+    setStatusPopup(null)
+    api('/api/users/settings', { method:'POST', body: JSON.stringify({ custom_statuses: next }) }).catch(()=>{})
+    await quickStatus(accId, name)
   }
 
   async function quickStatus(accId, newStatus) {
@@ -1804,18 +1836,57 @@ export default function Home() {
 
       {/* STATUS POPUP */}
       {statusPopup && (
-        <div style={{position:'fixed',inset:0,zIndex:399}} onClick={()=>setStatusPopup(null)}>
-          <div className="status-popup" style={{left:Math.min(statusPopup.x,window.innerWidth-190),top:Math.min(statusPopup.y+4,window.innerHeight-300)}}>
-            <div className="sp-item" onClick={e=>{e.stopPropagation();quickStatus(statusPopup.id,'')}} style={{color:'var(--t3)'}}>
-              <span style={{width:7,height:7,borderRadius:'50%',border:'1px solid var(--t3)',display:'inline-block',flexShrink:0}}/>
-              — без статуса —
-            </div>
-            {STATUSES.map(st=>(
-              <div key={st} className="sp-item" onClick={e=>{e.stopPropagation();quickStatus(statusPopup.id,st)}}>
-                <span style={{width:7,height:7,borderRadius:'50%',background:STATUS_COLOR[st]||'#6b7280',display:'inline-block',flexShrink:0}}/>
-                {st}
+        <div style={{position:'fixed',inset:0,zIndex:399}} onClick={()=>{ setStatusPopup(null); setStatusCreate(null) }}>
+          <div className="status-popup" style={{left:Math.min(statusPopup.x,window.innerWidth-230),top:Math.min(statusPopup.y+4,window.innerHeight-360)}} onClick={e=>e.stopPropagation()}>
+            {!statusCreate && (
+              <>
+                <div className="sp-item" onClick={e=>{e.stopPropagation();quickStatus(statusPopup.id,'')}} style={{color:'var(--t3)'}}>
+                  <span style={{width:7,height:7,borderRadius:'50%',border:'1px solid var(--t3)',display:'inline-block',flexShrink:0}}/>
+                  — без статуса —
+                </div>
+                {STATUSES.map(st=>(
+                  <div key={st} className="sp-item" onClick={e=>{e.stopPropagation();quickStatus(statusPopup.id,st)}}>
+                    <span style={{width:7,height:7,borderRadius:'50%',background:STATUS_COLOR[st]||'#6b7280',display:'inline-block',flexShrink:0}}/>
+                    {st}
+                  </div>
+                ))}
+                <div className="sp-item" style={{borderTop:'1px solid var(--bd)',marginTop:3,paddingTop:7,color:'var(--acc)'}}
+                     onClick={e=>{e.stopPropagation();setStatusCreate({ name:'', color:'#5b6ef5', category:'active' })}}>
+                  + Новый статус
+                </div>
+              </>
+            )}
+            {statusCreate && (
+              <div style={{padding:'6px 8px 8px',minWidth:210}} onClick={e=>e.stopPropagation()}>
+                <div style={{fontSize:10,color:'var(--t3)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:6}}>Новый статус</div>
+                <input
+                  autoFocus
+                  value={statusCreate.name}
+                  onChange={e=>setStatusCreate({...statusCreate,name:e.target.value})}
+                  onKeyDown={e=>{ if(e.key==='Enter'){ createAndApplyStatus(statusPopup.id) } else if(e.key==='Escape'){ setStatusCreate(null) } }}
+                  placeholder="Название…"
+                  style={{width:'100%',background:'var(--s1)',border:'1px solid var(--bd)',borderRadius:5,padding:'6px 8px',color:'var(--t)',fontSize:13,outline:'none',fontFamily:'Inter,sans-serif',marginBottom:8}}
+                />
+                <div style={{fontSize:10,color:'var(--t3)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:5}}>Цвет</div>
+                <div style={{display:'flex',gap:5,flexWrap:'wrap',marginBottom:9}}>
+                  {STATUS_PALETTE.map(c=>(
+                    <div key={c} onClick={()=>setStatusCreate({...statusCreate,color:c})}
+                         style={{width:20,height:20,borderRadius:'50%',background:c,cursor:'pointer',border:statusCreate.color===c?'2px solid #fff':'2px solid transparent',boxShadow:statusCreate.color===c?'0 0 0 1px var(--acc)':'none'}}/>
+                  ))}
+                  <input type="color" value={statusCreate.color} onChange={e=>setStatusCreate({...statusCreate,color:e.target.value})}
+                         style={{width:24,height:24,border:'1px solid var(--bd)',borderRadius:4,background:'var(--s2)',padding:1,cursor:'pointer'}} title="Свой цвет"/>
+                </div>
+                <div style={{fontSize:10,color:'var(--t3)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:5}}>Категория</div>
+                <select value={statusCreate.category} onChange={e=>setStatusCreate({...statusCreate,category:e.target.value})}
+                        style={{width:'100%',background:'var(--s1)',border:'1px solid var(--bd)',borderRadius:5,padding:'6px 8px',color:'var(--t)',fontSize:12,outline:'none',cursor:'pointer',fontFamily:'Inter,sans-serif',marginBottom:10}}>
+                  {STATUS_CATEGORIES.map(c=><option key={c.k} value={c.k}>{c.l}</option>)}
+                </select>
+                <div style={{display:'flex',gap:6}}>
+                  <button className="btn" onClick={()=>setStatusCreate(null)} style={{flex:'0 0 auto'}}>Отмена</button>
+                  <button className="btn btn-acc" onClick={()=>createAndApplyStatus(statusPopup.id)} style={{flex:1,justifyContent:'center'}}>Создать и применить</button>
+                </div>
               </div>
-            ))}
+            )}
           </div>
         </div>
       )}
