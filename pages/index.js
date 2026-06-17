@@ -701,10 +701,20 @@ export default function Home() {
       : [ctx.id]
     return ids.map(id => accounts.find(x => x.id === id)).filter(Boolean)
   }
+  // Значение поля для копирования: обычные поля аккаунта + метрики из metricsSummary
+  function copyValOf(a, field) {
+    if (field === 'today_cost' || field === 'yest_cost' || field === 'clicks') {
+      const mt = metricsOf(a, metricsSummary)
+      const n = +mt[field] || 0
+      if (!n) return ''
+      return field === 'clicks' ? String(n) : (Math.round(n * 100) / 100).toString()
+    }
+    return a[field] == null ? '' : String(a[field])
+  }
   function copyField(field, label, ctx) {
     const accs = copyTargets(ctx)
     if (accs.length === 0) return
-    const vals = accs.map(a => a[field] || '').filter(Boolean).join('\n')
+    const vals = accs.map(a => copyValOf(a, field)).filter(Boolean).join('\n')
     if (navigator.clipboard?.writeText) navigator.clipboard.writeText(vals)
     setCopyPopup(null)
     if (!vals) { showToast('Пусто: ' + label); return }
@@ -716,17 +726,17 @@ export default function Home() {
   function copyPack(ctx) {
     const accs = copyTargets(ctx)
     if (accs.length === 0) return
-    const HEADERS = ['Название','Google Ads ID','White','Black UTM','Google Tag','CLO']
-    const FIELDS  = ['name','google_ads_id','link','black','google_tag','clo_url']
+    const HEADERS = ['Название','Google Ads ID','White','Black UTM','Google Tag','CLO','Спенд сегодня','Спенд вчера','Клики']
+    const FIELDS  = ['name','google_ads_id','link','black','google_tag','clo_url','today_cost','yest_cost','clicks']
     let text
     if (accs.length === 1) {
       // Одна строка → блок «поле: значение» как раньше
       const a = accs[0]
-      text = HEADERS.map((h, i) => `${h}: ${a[FIELDS[i]] || ''}`).join('\n')
+      text = HEADERS.map((h, i) => `${h}: ${copyValOf(a, FIELDS[i])}`).join('\n')
     } else {
       // Пачка → TSV-таблица для Sheets/Excel (ячейки через TAB, строки через перенос)
       const safe = (v) => String(v || '').replace(/[\t\r\n]/g, ' ')
-      const lines = [HEADERS.join('\t'), ...accs.map(a => FIELDS.map(f => safe(a[f])).join('\t'))]
+      const lines = [HEADERS.join('\t'), ...accs.map(a => FIELDS.map(f => safe(copyValOf(a, f))).join('\t'))]
       text = lines.join('\n')
     }
     if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text)
@@ -1645,6 +1655,9 @@ export default function Home() {
                   else if (v === 'black')  copyField('black','Black UTM',null)
                   else if (v === 'tag')    copyField('google_tag','Google Tag',null)
                   else if (v === 'clo')    copyField('clo_url','CLO',null)
+                  else if (v === 'today')  copyField('today_cost','Спенд сегодня',null)
+                  else if (v === 'yest')   copyField('yest_cost','Спенд вчера',null)
+                  else if (v === 'clicks') copyField('clicks','Клики',null)
                   else if (v === 'all')    copyPack(null)
                   e.target.value = ''
                 }} title="Скопировать другое поле">
@@ -1653,6 +1666,9 @@ export default function Home() {
                   <option value="black">Black UTM</option>
                   <option value="tag">Google Tag</option>
                   <option value="clo">CLO</option>
+                  <option value="today">Спенд сегодня</option>
+                  <option value="yest">Спенд вчера</option>
+                  <option value="clicks">Клики</option>
                   <option value="all">Всё (таблица для Sheets)</option>
                 </select>
                 <button className="btn" onClick={()=>exportCSV(visibleCols)}>⬇ CSV</button>
@@ -1821,6 +1837,9 @@ export default function Home() {
               <div className="sp-item" onClick={e=>{e.stopPropagation();copyField('black','Black UTM'+suffix,a)}}>Копировать Black UTM{suffix}</div>
               <div className="sp-item" onClick={e=>{e.stopPropagation();copyField('google_tag','Google Tag'+suffix,a)}}>Копировать Google Tag{suffix}</div>
               <div className="sp-item" onClick={e=>{e.stopPropagation();copyField('clo_url','CLO'+suffix,a)}}>Копировать CLO{suffix}</div>
+              <div className="sp-item" onClick={e=>{e.stopPropagation();copyField('today_cost','Спенд сегодня'+suffix,a)}}>Копировать Спенд сегодня{suffix}</div>
+              <div className="sp-item" onClick={e=>{e.stopPropagation();copyField('yest_cost','Спенд вчера'+suffix,a)}}>Копировать Спенд вчера{suffix}</div>
+              <div className="sp-item" onClick={e=>{e.stopPropagation();copyField('clicks','Клики'+suffix,a)}}>Копировать Клики{suffix}</div>
               <div className="sp-item" style={{borderTop:'1px solid var(--bd)',marginTop:3,paddingTop:7,color:'var(--acc)'}} onClick={e=>{e.stopPropagation();copyPack(a)}}>⎘ Копировать всё{bulk ? ' (таблица)' : ''}</div>
             </div>
           </div>
