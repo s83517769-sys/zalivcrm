@@ -1161,10 +1161,11 @@ export default function Home() {
           onClick={()=>{ if(rowDrag||editCell) return; setActiveId(a.id); clearTimeout(openTimer.current); openTimer.current=setTimeout(()=>openDrawer(a),180) }}
           onDragOver={rowDrag ? (e=>{e.preventDefault();const r=e.currentTarget.getBoundingClientRect();const side=(e.clientY-r.top)<r.height/2?'top':'bottom';if(!rowOver||rowOver.id!==a.id||rowOver.side!==side)setRowOver({id:a.id,side})}) : undefined}
           onDrop={rowDrag ? (e=>{e.preventDefault();dropRow(a.id)}) : undefined}>
-        <td className="chk-td" onClick={e=>e.stopPropagation()}>
-          <input type="checkbox" checked={selectedIds.includes(a.id)}
-                 onChange={()=>{/* state ведём через onClick, чтобы поймать Shift/Ctrl-модификаторы */}}
-                 onClick={e=>{e.stopPropagation(); e.preventDefault(); handleSelectClick(e, a.id)}}/>
+        <td className="chk-td"
+            onClick={e => { e.stopPropagation(); handleSelectClick(e, a.id) }}>
+          {/* input — только визуал; всё взаимодействие на <td>, иначе native click checkbox
+              + preventDefault даёт состояние гонки между нативным change и React state */}
+          <input type="checkbox" checked={selectedIds.includes(a.id)} readOnly tabIndex={-1}/>
         </td>
         {visibleCols.map(c=>{
           const isStatus = c.key==='status'
@@ -1270,8 +1271,8 @@ export default function Home() {
         .bb-sep{width:1px;height:18px;background:var(--bd2)}
         .bb-inp{background:var(--s2);border:1px solid var(--bd);border-radius:4px;padding:3px 7px;font-size:11px;color:var(--t);outline:none;width:100px;font-family:'Inter',sans-serif}
         .bb-inp:focus{border-color:var(--acc)}
-        .chk-th,.chk-td{text-align:center;padding:0 4px!important;cursor:default}
-        .chk-th input,.chk-td input{cursor:pointer}
+        .chk-th,.chk-td{text-align:center;padding:0 4px!important;cursor:pointer}
+        .chk-th input,.chk-td input{cursor:pointer;pointer-events:none}
         .fp-row{display:flex;align-items:flex-start;gap:8px}
         .fp-lbl{font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.05em;width:80px;flex-shrink:0;padding-top:4px}
         .chips{display:flex;flex-wrap:wrap;gap:4px}
@@ -1684,11 +1685,11 @@ export default function Home() {
               ) : (
                 <table>
                   <thead><tr>
-                    <th className="chk-th" style={{width:32}}>
-                      <input type="checkbox"
+                    <th className="chk-th" style={{width:32}}
+                        onClick={e=>{e.stopPropagation(); toggleSelectPage(displayed.map(a=>a.id))}}>
+                      <input type="checkbox" readOnly tabIndex={-1}
                              checked={displayed.length>0 && displayed.every(a=>selectedIds.includes(a.id))}
-                             ref={el=>{ if(el){ const some=displayed.some(a=>selectedIds.includes(a.id)); const all=displayed.length>0&&displayed.every(a=>selectedIds.includes(a.id)); el.indeterminate=some&&!all } }}
-                             onChange={()=>toggleSelectPage(displayed.map(a=>a.id))}/>
+                             ref={el=>{ if(el){ const some=displayed.some(a=>selectedIds.includes(a.id)); const all=displayed.length>0&&displayed.every(a=>selectedIds.includes(a.id)); el.indeterminate=some&&!all } }}/>
                     </th>
                     {visibleCols.map(c=>{
                       const over = thOver && thOver.key===c.key
