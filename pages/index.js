@@ -1565,7 +1565,8 @@ export default function Home() {
                         width:colW(c), minWidth:colW(c), maxWidth:colW(c),
                         opacity: thDrag===c.key ? 0.5 : 1,
                         boxShadow: over ? (thOver.side==='left' ? 'inset 2px 0 0 var(--acc)' : 'inset -2px 0 0 var(--acc)') : undefined,
-                        position:'relative',
+                        // НЕ задаём position инлайном — иначе перебивает CSS `thead th{position:sticky}`.
+                        // sticky-th сам по себе создаёт positioning context для .col-resize (так же, как relative).
                       }
                       return (
                         <th key={c.key} style={thStyle} className={c.align==='r'?'r':undefined}
