@@ -1292,7 +1292,9 @@ export default function Home() {
         tbody tr{cursor:pointer;transition:background .07s}
         tbody tr:hover td{background:var(--s2)}
         .tbl-wrap tbody td{border-bottom:1px solid var(--bd)}
-        td{padding:6px 9px;vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        td{padding:6px 9px;vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;user-select:none}
+        /* Внутри инлайн-редактирования текст должен выделяться нормально */
+        .tbl-wrap tbody input,.tbl-wrap tbody textarea,.tbl-wrap tbody select,.cell-edit{user-select:text}
         td.r{text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px}
         .acc-name{font-family:'JetBrains Mono',monospace;font-weight:500;font-size:12px;color:var(--t)}
         .acc-sub{font-size:10px;color:var(--t3);margin-top:1px}
