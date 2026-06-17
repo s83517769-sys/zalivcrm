@@ -23,45 +23,88 @@ export default async function handler(req, res) {
     spendByUserTz = us?.spend_by_user_tz === true
   } catch {}
 
-  // ── Режим OFF (по умолчанию): спенд как в Google Ads — легаси-поля из accounts ──
+  // ── Режим OFF (по умолчанию): спенд «как в Google Ads» ──
+  // Источник — те же hourly_metrics, но агрегируем по поясу КАЖДОГО АККАУНТА (а не пользователя).
+  // hourly_metrics.metric_date уже хранится по поясу аккаунта (так пишет скрипт v2), поэтому
+  // достаточно сравнить с «сегодня/вчера» в поясе этого аккаунта — без перевода времени.
   if (!spendByUserTz) {
-    const { data: accs, error } = await supabaseAdmin
+    const { data: accs, error: accErr } = await supabaseAdmin
       .from('accounts')
-      .select('*')
+      .select('id, currency, account_timezone')
       .eq('user_id', USER_ID)
-    if (error) return res.status(500).json({ error: error.message })
+    if (accErr) return res.status(500).json({ error: accErr.message })
 
     const summary = {}
-    for (const a of (accs || [])) {
-      const entry = { currency: a.currency || 'USD' }
-      const hasToday = a.today_cost != null || a.today_clicks != null || a.today_conv != null
-      const hasYest  = a.yest_cost  != null || a.yest_clicks  != null || a.yest_conv  != null
-      if (hasToday) {
-        const cost = +a.today_cost || 0
-        const clicks = +a.today_clicks || 0
-        const conv = +a.today_conv || 0
-        entry.today = {
-          cost_usd: Math.round(cost * 100) / 100,           // имя историческое; нативная валюта
-          clicks,
-          conversions: Math.round(conv * 100) / 100,
-          cpc_usd: +a.today_cpc || (clicks > 0 ? Math.round(cost / clicks * 10000) / 10000 : 0),
-          cpa: conv > 0 ? Math.round(cost / conv * 100) / 100 : 0,
-        }
-      }
-      if (hasYest) {
-        const cost = +a.yest_cost || 0
-        const clicks = +a.yest_clicks || 0
-        const conv = +a.yest_conv || 0
-        entry.yesterday = {
-          cost_usd: Math.round(cost * 100) / 100,
-          clicks,
-          conversions: Math.round(conv * 100) / 100,
-          cpc_usd: +a.yest_cpc || (clicks > 0 ? Math.round(cost / clicks * 10000) / 10000 : 0),
-          cpa: conv > 0 ? Math.round(cost / conv * 100) / 100 : 0,
-        }
-      }
-      summary[a.id] = entry
+    for (const a of (accs || [])) summary[a.id] = { currency: a.currency || 'USD' }
+    const accMap = Object.fromEntries((accs || []).map(a => [a.id, a]))
+
+    // Окно ~3 даты покрывает любые «сегодня/вчера» при любых поясах (-12..+14).
+    // Считаем по UTC-дате с запасом 2 дня вперёд/назад от текущей.
+    const utcNow = DateTime.utc()
+    const sinceDate = utcNow.minus({ days: 2 }).toISODate()
+    const { data: hours, error: hErr } = await supabaseAdmin
+      .from('hourly_metrics')
+      .select('account_id, metric_date, account_timezone, cost_native, clicks, conversions')
+      .eq('user_id', USER_ID)
+      .gte('metric_date', sinceDate)
+    if (hErr) return res.status(500).json({ error: hErr.message })
+
+    // Группируем часы по account_id + понимаем пояс аккаунта (из самих часов или из accounts).
+    const byAcc = {}
+    for (const h of (hours || [])) {
+      const g = byAcc[h.account_id] || (byAcc[h.account_id] = { tz: null, rows: [] })
+      if (!g.tz && h.account_timezone) g.tz = h.account_timezone
+      g.rows.push(h)
     }
+
+    const hourlyAccounts = new Set()
+    for (const [accId, g] of Object.entries(byAcc)) {
+      const zoneRaw = g.tz || accMap[accId]?.account_timezone || 'UTC'
+      const zone = DateTime.local().setZone(zoneRaw).isValid ? zoneRaw : 'UTC'
+      const todayAcc     = DateTime.now().setZone(zone).toISODate()
+      const yesterdayAcc = DateTime.now().setZone(zone).minus({ days: 1 }).toISODate()
+
+      const buckets = { today: { cost: 0, clicks: 0, conv: 0 }, yesterday: { cost: 0, clicks: 0, conv: 0 } }
+      let touched = false
+      for (const h of g.rows) {
+        let key = null
+        if (h.metric_date === todayAcc) key = 'today'
+        else if (h.metric_date === yesterdayAcc) key = 'yesterday'
+        if (!key) continue
+        touched = true
+        buckets[key].cost += +h.cost_native || 0
+        buckets[key].clicks += +h.clicks || 0
+        buckets[key].conv += +h.conversions || 0
+      }
+      if (!touched) continue
+      hourlyAccounts.add(accId)
+      const entry = summary[accId] || (summary[accId] = { currency: accMap[accId]?.currency || 'USD' })
+      const pack = (b) => ({
+        cost_usd: Math.round(b.cost * 100) / 100,                  // имя историческое; нативная валюта
+        clicks: b.clicks,
+        conversions: Math.round(b.conv * 100) / 100,
+        cpc_usd: b.clicks > 0 ? Math.round(b.cost / b.clicks * 10000) / 10000 : 0,
+        cpa: b.conv > 0 ? Math.round(b.cost / b.conv * 100) / 100 : 0,
+      })
+      if (buckets.today.cost > 0 || buckets.today.clicks > 0 || buckets.today.conv > 0) entry.today = pack(buckets.today)
+      if (buckets.yesterday.cost > 0 || buckets.yesterday.clicks > 0 || buckets.yesterday.conv > 0) entry.yesterday = pack(buckets.yesterday)
+    }
+
+    // Фолбэк на daily_metrics — для аккаунтов на старом скрипте без часов
+    const todayLegacy = utcNow.toISODate()
+    const yesterdayLegacy = utcNow.minus({ days: 1 }).toISODate()
+    const { data: dms } = await supabaseAdmin
+      .from('daily_metrics')
+      .select('account_id, metric_date, clicks, cpc_usd, cost_usd, conversions, cpa')
+      .eq('user_id', USER_ID)
+      .in('metric_date', [todayLegacy, yesterdayLegacy])
+    for (const row of (dms || [])) {
+      if (hourlyAccounts.has(row.account_id)) continue
+      const entry = summary[row.account_id] || (summary[row.account_id] = { currency: accMap[row.account_id]?.currency || 'USD' })
+      if (row.metric_date === todayLegacy) entry.today = row
+      else entry.yesterday = row
+    }
+
     return res.status(200).json({ summary, user_timezone: userTz, spend_by_user_tz: false })
   }
 
