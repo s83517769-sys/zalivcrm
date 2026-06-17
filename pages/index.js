@@ -775,16 +775,29 @@ export default function Home() {
     const fromId = rowDrag
     const side = rowOver?.side || 'top'
     setRowDrag(null); setRowOver(null)
-    if (!fromId || fromId === toId) return
-    // базовый порядок = текущий отображаемый (учитывает сортировку/фильтр),
-    // плюс id, которых нет на экране (другие страницы/фильтры) — в конец
+    if (!fromId) return
+
+    // Групповой drag: если за отмеченную строку — тащим ВСЕ отмеченные в порядке отметки
+    // (selectedIds хранит порядок кликов по чекбоксам). Если за неотмеченную — одиночный drag.
+    const fromIds = selectedIds.includes(fromId) ? selectedIds.slice() : [fromId]
+    const fromSet = new Set(fromIds)
+
+    // База: текущий отображаемый порядок + остальные id из сохранённого rowOrder в конец.
+    // Это гарантирует, что НИ ОДИН аккаунт не теряется (как чинили в баге с пропадающими строками).
     const visibleIds = filtered.map(a => a.id)
     const base = [...visibleIds, ...rowOrder.filter(id => !visibleIds.includes(id))]
-    const next = base.filter(id => id !== fromId)
-    let toI = next.indexOf(toId)
-    if (toI < 0) return
-    if (side === 'bottom') toI += 1
-    next.splice(toI, 0, fromId)
+
+    // Позиция вставки относительно toId считается в базовом массиве, ДО удаления fromIds.
+    let baseIdx = base.indexOf(toId)
+    if (baseIdx < 0) return
+    if (side === 'bottom') baseIdx += 1
+    // Сколько fromIds лежит до baseIdx — на столько индекс сместится после удаления.
+    let removedBefore = 0
+    for (let i = 0; i < baseIdx; i++) if (fromSet.has(base[i])) removedBefore++
+
+    const next = base.filter(id => !fromSet.has(id))
+    const insertAt = baseIdx - removedBefore
+    next.splice(insertAt, 0, ...fromIds)
     persistRowOrder(next)
     setSort({ key: 'custom', dir: 'asc' }) // ручной порядок сбрасывает сортировку
   }
@@ -1072,12 +1085,18 @@ export default function Home() {
     }
   }
 
+  // Какие id сейчас «в воздухе» при drag: пачка, если хват за отмеченную; иначе одна строка.
+  const dragFromIds = rowDrag
+    ? (selectedIds.includes(rowDrag) ? selectedIds : [rowDrag])
+    : []
+  const draggedSet = new Set(dragFromIds)
+
   function renderRow(a) {
     const mt = metricsOf(a, metricsSummary)
     const marks = ruleHits(a)
     const rOver = rowOver && rowOver.id===a.id
     const trStyle = {
-      opacity: rowDrag===a.id ? 0.4 : undefined,
+      opacity: draggedSet.has(a.id) ? 0.4 : undefined,   // вся пачка в полупрозрачности при групповом drag
       boxShadow: rOver
         ? (rowOver.side==='top' ? 'inset 0 2px 0 var(--acc)' : 'inset 0 -2px 0 var(--acc)')
         : (marks.stripe ? `inset 3px 0 0 ${marks.stripe}` : undefined),
@@ -1309,6 +1328,7 @@ export default function Home() {
         .overlay{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:500;gap:14px}
         .spin{width:36px;height:36px;border:3px solid var(--bd2);border-top-color:var(--acc);border-radius:50%;animation:spin .8s linear infinite}
         @keyframes spin{to{transform:rotate(360deg)}}
+        .drag-badge{position:fixed;top:60px;left:50%;transform:translateX(-50%);background:var(--acc2);border:1px solid var(--acc);color:#fff;border-radius:14px;padding:5px 14px;font-size:12px;font-weight:500;z-index:650;pointer-events:none;box-shadow:0 4px 14px rgba(0,0,0,.3);font-family:'Inter',sans-serif}
         .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--s3);border:1px solid var(--bd2);border-radius:5px;padding:8px 16px;font-size:12px;color:var(--t);opacity:0;transition:all .2s;z-index:600;pointer-events:none;white-space:nowrap}
         .toast.show{opacity:1;transform:translateX(-50%) translateY(0);pointer-events:auto}
         .toast-btn{margin-left:10px;background:var(--acc2);border:1px solid var(--acc);border-radius:4px;color:#fff;font-size:11px;padding:2px 9px;cursor:pointer;font-family:'Inter',sans-serif}
@@ -2017,6 +2037,9 @@ export default function Home() {
       <datalist id="dl-dis_reason">{distinctVals('dis_reason').map(v => <option key={v} value={v}/>)}</datalist>
       <datalist id="dl-ban_reason">{distinctVals('ban_reason').map(v => <option key={v} value={v}/>)}</datalist>
 
+      {dragFromIds.length > 1 && (
+        <div className="drag-badge">⇅ перетаскивается {dragFromIds.length} аккаунт{dragFromIds.length%10===1&&dragFromIds.length%100!==11?'':dragFromIds.length%10>=2&&dragFromIds.length%10<=4&&(dragFromIds.length%100<10||dragFromIds.length%100>=20)?'а':'ов'}</div>
+      )}
       <div className={`toast${toast?' show':''}`}>
         {toast}
         {toastBtn && <button className="toast-btn" onClick={()=>{ toastBtn.onClick(); setToast(''); setToastBtn(null) }}>{toastBtn.label}</button>}
