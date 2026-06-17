@@ -32,45 +32,75 @@ export default async function handler(req, res) {
       spendByUserTz = us?.spend_by_user_tz === true
     } catch {}
 
-    if (!spendByUserTz) {
-      return res.status(200).json({ metrics: data || [] })
-    }
-
-    // Режим ON: дни из часов под пояс пользователя — точнее дневной таблицы, перекрывают её
     const byDate = {}
     for (const r of (data || [])) byDate[r.metric_date] = r
+
     try {
+      if (!spendByUserTz) {
+        // Режим OFF: дни «как в Google Ads». Группируем hourly_metrics по их metric_date —
+        // он уже хранится по поясу АККАУНТА (скрипт v2 строит дату в своём поясе).
+        // Никакого перевода не нужно — просто sum по h.metric_date.
+        const since = DateTime.utc().minus({ days: 92 }).toISODate()
+        const { data: hours } = await supabaseAdmin
+          .from('hourly_metrics')
+          .select('metric_date, cost_native, clicks, conversions')
+          .eq('account_id', accountId)
+          .eq('user_id', USER_ID)
+          .gte('metric_date', since)
 
-      const since = DateTime.now().setZone(userTz).minus({ days: 92 }).toISODate()
-      const { data: hours } = await supabaseAdmin
-        .from('hourly_metrics')
-        .select('metric_date, hour, account_timezone, cost_native, clicks, conversions')
-        .eq('account_id', accountId)
-        .eq('user_id', USER_ID)
-        .gte('metric_date', since)
+        const days = {}
+        for (const h of (hours || [])) {
+          const d = days[h.metric_date] || (days[h.metric_date] = { cost: 0, clicks: 0, conversions: 0 })
+          d.cost += +h.cost_native || 0
+          d.clicks += +h.clicks || 0
+          d.conversions += +h.conversions || 0
+        }
+        for (const [date, d] of Object.entries(days)) {
+          byDate[date] = {
+            id: `h-${accountId}-${date}`,
+            account_id: accountId,
+            metric_date: date,
+            clicks: d.clicks,
+            cost_usd: Math.round(d.cost * 100) / 100,                 // имя историческое; нативная валюта
+            conversions: Math.round(d.conversions * 100) / 100,
+            cpc_usd: d.clicks > 0 ? Math.round(d.cost / d.clicks * 10000) / 10000 : 0,
+            cpa: d.conversions > 0 ? Math.round(d.cost / d.conversions * 100) / 100 : 0,
+            source: 'hourly_acct_tz',
+          }
+        }
+      } else {
+        // Режим ON: дни из часов под ПОЯС ПОЛЬЗОВАТЕЛЯ — точнее дневной таблицы, перекрывают её
+        const since = DateTime.now().setZone(userTz).minus({ days: 92 }).toISODate()
+        const { data: hours } = await supabaseAdmin
+          .from('hourly_metrics')
+          .select('metric_date, hour, account_timezone, cost_native, clicks, conversions')
+          .eq('account_id', accountId)
+          .eq('user_id', USER_ID)
+          .gte('metric_date', since)
 
-      const days = {} // userDate -> агрегат
-      for (const h of (hours || [])) {
-        const zone = h.account_timezone && DateTime.local().setZone(h.account_timezone).isValid ? h.account_timezone : 'UTC'
-        const dt = DateTime.fromISO(h.metric_date, { zone }).set({ hour: h.hour })
-        if (!dt.isValid) continue
-        const userDate = dt.setZone(userTz).toISODate()
-        const d = days[userDate] || (days[userDate] = { cost: 0, clicks: 0, conversions: 0 })
-        d.cost += +h.cost_native || 0
-        d.clicks += +h.clicks || 0
-        d.conversions += +h.conversions || 0
-      }
-      for (const [date, d] of Object.entries(days)) {
-        byDate[date] = {
-          id: `h-${accountId}-${date}`,
-          account_id: accountId,
-          metric_date: date,
-          clicks: d.clicks,
-          cost_usd: Math.round(d.cost * 100) / 100,   // имя историческое; нативная валюта
-          conversions: Math.round(d.conversions * 100) / 100,
-          cpc_usd: d.clicks > 0 ? Math.round(d.cost / d.clicks * 10000) / 10000 : 0,
-          cpa: d.conversions > 0 ? Math.round(d.cost / d.conversions * 100) / 100 : 0,
-          source: 'hourly',
+        const days = {}
+        for (const h of (hours || [])) {
+          const zone = h.account_timezone && DateTime.local().setZone(h.account_timezone).isValid ? h.account_timezone : 'UTC'
+          const dt = DateTime.fromISO(h.metric_date, { zone }).set({ hour: h.hour })
+          if (!dt.isValid) continue
+          const userDate = dt.setZone(userTz).toISODate()
+          const d = days[userDate] || (days[userDate] = { cost: 0, clicks: 0, conversions: 0 })
+          d.cost += +h.cost_native || 0
+          d.clicks += +h.clicks || 0
+          d.conversions += +h.conversions || 0
+        }
+        for (const [date, d] of Object.entries(days)) {
+          byDate[date] = {
+            id: `h-${accountId}-${date}`,
+            account_id: accountId,
+            metric_date: date,
+            clicks: d.clicks,
+            cost_usd: Math.round(d.cost * 100) / 100,
+            conversions: Math.round(d.conversions * 100) / 100,
+            cpc_usd: d.clicks > 0 ? Math.round(d.cost / d.clicks * 10000) / 10000 : 0,
+            cpa: d.conversions > 0 ? Math.round(d.cost / d.conversions * 100) / 100 : 0,
+            source: 'hourly_user_tz',
+          }
         }
       }
     } catch (e) {
