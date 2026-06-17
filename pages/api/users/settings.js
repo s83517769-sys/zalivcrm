@@ -11,7 +11,7 @@ const DEFAULT_WATCHDOG_HOURS = 2
 const WRITABLE = [
   'custom_statuses', 'custom_groups', 'watchdog_hours', 'column_config',
   'row_rules', 'currency_rates', 'ui_density', 'ui_theme',
-  'status_automations', 'default_sort', 'user_timezone',
+  'status_automations', 'default_sort', 'user_timezone', 'spend_by_user_tz',
 ]
 
 function notEmpty(v) {
@@ -51,6 +51,8 @@ export default async function handler(req, res) {
         default_sort: row?.default_sort || null,
         // канонический IANA-id Кипра — Asia/Nicosia (Europe/Nicosia — алиас, его нет в списках выбора)
         user_timezone: (row?.user_timezone || 'Asia/Nicosia') === 'Europe/Nicosia' ? 'Asia/Nicosia' : (row?.user_timezone || 'Asia/Nicosia'),
+        // По умолчанию ВЫКЛ: показываем «как в Google Ads» (легаси-поля today_/yest_ из accounts).
+        spend_by_user_tz: row?.spend_by_user_tz === true,
       },
     })
   }
