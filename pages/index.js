@@ -631,25 +631,29 @@ export default function Home() {
     const isMeta  = e.metaKey || e.ctrlKey
     if (isShift && selAnchorId && selAnchorId !== id) {
       const order = displayed.map(a => a.id)
-      let i1 = order.indexOf(selAnchorId)
-      let i2 = order.indexOf(id)
-      if (i1 < 0 || i2 < 0) {
-        // якорь не в текущем виде → откатываемся на обычный toggle
-        toggleSelect(id)
-        setSelAnchorId(id)
-        return
+      const idxA = order.indexOf(selAnchorId)
+      const idxB = order.indexOf(id)
+      if (idxA < 0 && idxB < 0) {
+        // оба конца невидимы → откатываемся на обычный toggle
+        toggleSelect(id); setSelAnchorId(id); return
       }
-      if (i1 > i2) [i1, i2] = [i2, i1]
-      const range = order.slice(i1, i2 + 1)
-      // ВЫДЕЛЯЕМ диапазон (не toggle): добавляем то, чего нет, прочие выделения за пределами сохраняем.
-      // Порядок в selectedIds — визуальный для строк диапазона; так групповой drag и копирование лягут по визуалу.
+      // Если виден только один конец, считаем диапазон от него же до него же (плюс explicit add ниже).
+      const a1 = idxA < 0 ? idxB : idxA
+      const a2 = idxB < 0 ? idxA : idxB
+      const lo = Math.min(a1, a2)
+      const hi = Math.max(a1, a2)
+      const range = order.slice(lo, hi + 1)            // inclusive с обоих концов
       setSelectedIds(s => {
         const set = new Set(s)
         const next = s.slice()
-        for (const rid of range) if (!set.has(rid)) { next.push(rid); set.add(rid) }
+        const push = (rid) => { if (rid && !set.has(rid)) { next.push(rid); set.add(rid) } }
+        for (const rid of range) push(rid)
+        // Защита от любых off-by-one / устаревшего displayed: оба клик-конца гарантированно в выделении.
+        push(selAnchorId)
+        push(id)
         return next
       })
-      // Якорь НЕ обновляем — чтобы можно было расширять диапазон следующим Shift+click от той же исходной строки.
+      // Якорь не обновляем — расширяем/сужаем диапазон следующим Shift+click от той же исходной точки.
       return
     }
     // Cmd/Ctrl или обычный клик — toggle одиночный (как раньше). Якорь обновляется в обоих случаях.
