@@ -2,7 +2,9 @@ import { supabaseAdmin } from '../../../lib/supabase'
 import { getUserIdFromRequest } from '../../../lib/auth'
 
 // Поля, разрешённые к массовому изменению
-const ALLOWED = ['status', 'zalivshik', 'geo', 'is_archived']
+const ALLOWED = ['status', 'zalivshik', 'geo', 'funnel', 'format', 'creo', 'dis_reason', 'comment', 'is_archived']
+// Поля, которые логируем в account_history
+const HISTORY_FIELDS = ['status', 'zalivshik', 'geo', 'funnel', 'format', 'creo', 'dis_reason', 'comment']
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
@@ -42,14 +44,23 @@ export default async function handler(req, res) {
     .in('id', ids)
   if (updErr) return res.status(500).json({ error: updErr.message })
 
-  // История по смене статуса
-  if ('status' in patch && Array.isArray(before)) {
-    const rows = before
-      .filter(b => b.status !== patch.status)
-      .map(b => ({
-        account_id: b.id, user_id: USER_ID, field_name: 'status',
-        old_value: b.status, new_value: patch.status, note: 'Массовое изменение',
-      }))
+  // История по каждому изменённому полю
+  if (Array.isArray(before)) {
+    const rows = []
+    for (const field of HISTORY_FIELDS) {
+      if (!(field in patch)) continue
+      const nv = patch[field]
+      for (const b of before) {
+        const ov = b[field]
+        if ((ov ?? null) === (nv ?? null)) continue
+        rows.push({
+          account_id: b.id, user_id: USER_ID, field_name: field,
+          old_value: ov == null ? null : String(ov),
+          new_value: nv == null ? null : String(nv),
+          note: 'Массовое изменение',
+        })
+      }
+    }
     if (rows.length) await supabaseAdmin.from('account_history').insert(rows)
   }
 

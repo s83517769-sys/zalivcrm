@@ -176,7 +176,7 @@ export default function Home() {
   // ── Выделение / массовые действия ──
   const [selectedIds, setSelectedIds] = useState([])
   const [selAnchorId, setSelAnchorId] = useState(null)   // якорь для Shift+click (последняя «не-shift» строка)
-  const [bulkBar, setBulkBar] = useState({ zalivshik:'', geo:'' })
+  const [bulkBar, setBulkBar] = useState({ zalivshik:'', geo:'', funnel:'', creo:'', dis_reason:'', comment:'' })
   const [confirmDialog, setConfirmDialog] = useState(null) // { msg, onYes }
 
   // ── Инлайн-редактирование ──
@@ -1623,6 +1623,19 @@ export default function Home() {
                        onKeyDown={e=>{if(e.key==='Enter'&&bulkBar.zalivshik.trim()){bulkUpdate({zalivshik:bulkBar.zalivshik.trim()},{label:'Заливщик обновлён'});setBulkBar({...bulkBar,zalivshik:''})}}}/>
                 <input className="bb-inp" placeholder="Гео…" value={bulkBar.geo} onChange={e=>setBulkBar({...bulkBar,geo:e.target.value})}
                        onKeyDown={e=>{if(e.key==='Enter'&&bulkBar.geo.trim()){bulkUpdate({geo:bulkBar.geo.trim()},{label:'Гео обновлено'});setBulkBar({...bulkBar,geo:''})}}}/>
+                <input className="bb-inp" list="dl-funnel" placeholder="Воронка…" value={bulkBar.funnel} onChange={e=>setBulkBar({...bulkBar,funnel:e.target.value})}
+                       onKeyDown={e=>{if(e.key==='Enter'&&bulkBar.funnel.trim()){bulkUpdate({funnel:bulkBar.funnel.trim()},{label:'Воронка обновлена'});setBulkBar({...bulkBar,funnel:''})}}}/>
+                <select className="ssel" value="" onChange={e=>{ const v=e.target.value; if(v){ bulkUpdate({format:v},{label:'Формат → '+v}); e.target.value=''; } }}>
+                  <option value="">Формат всем…</option>
+                  <option value="Фото">Фото</option>
+                  <option value="Видео">Видео</option>
+                </select>
+                <input className="bb-inp" list="dl-creo" placeholder="Крео…" value={bulkBar.creo} onChange={e=>setBulkBar({...bulkBar,creo:e.target.value})}
+                       onKeyDown={e=>{if(e.key==='Enter'&&bulkBar.creo.trim()){bulkUpdate({creo:bulkBar.creo.trim()},{label:'Крео обновлено'});setBulkBar({...bulkBar,creo:''})}}}/>
+                <input className="bb-inp" list="dl-dis_reason" placeholder="Дизапрув…" value={bulkBar.dis_reason} onChange={e=>setBulkBar({...bulkBar,dis_reason:e.target.value})}
+                       onKeyDown={e=>{if(e.key==='Enter'&&bulkBar.dis_reason.trim()){bulkUpdate({dis_reason:bulkBar.dis_reason.trim()},{label:'Причина дизапрува обновлена'});setBulkBar({...bulkBar,dis_reason:''})}}}/>
+                <input className="bb-inp" placeholder="Комментарий…" value={bulkBar.comment} onChange={e=>setBulkBar({...bulkBar,comment:e.target.value})}
+                       onKeyDown={e=>{if(e.key==='Enter'&&bulkBar.comment.trim()){bulkUpdate({comment:bulkBar.comment.trim()},{label:'Комментарий обновлён'});setBulkBar({...bulkBar,comment:''})}}}/>
                 <div className="bb-sep"/>
                 <button className="btn" onClick={()=>copyField('name','названия',null)}>⎘ Названия</button>
                 <button className="btn" onClick={()=>copyField('google_ads_id','Google Ads ID',null)}>⎘ ID</button>
