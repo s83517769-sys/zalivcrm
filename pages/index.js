@@ -22,13 +22,16 @@ function groupOf(name) {
   return 'OTHER'
 }
 
-// Поля, редактируемые инлайн (двойной клик по ячейке). combo = input + datalist
+// Поля, редактируемые инлайн (двойной клик по ячейке). combo = input + datalist.
+// field — имя поля в a.* если оно отличается от ключа колонки.
+// list — id <datalist> если он отличается от dl-<key>.
 const EDITABLE = {
   name:{ t:'text' }, google_ads_id:{ t:'text' },
   geo:{ t:'combo' }, funnel:{ t:'combo' }, creo:{ t:'combo' }, card:{ t:'combo' },
   zalivshik:{ t:'combo' }, google_tag:{ t:'text' }, comment:{ t:'text' },
   format:{ t:'select', opts:['Фото','Видео'] },
   launch_date:{ t:'date' }, crut_date:{ t:'date' }, ban_date:{ t:'date' },
+  dis:{ t:'combo', field:'dis_reason', list:'dl-dis_reason' },
 }
 const COMBO_FIELDS = ['geo','funnel','creo','card','zalivshik']
 
@@ -616,30 +619,31 @@ export default function Home() {
   function startEdit(a, key) {
     const cfg = EDITABLE[key]
     if (!cfg) return
-    setEditCell({ id: a.id, key, t: cfg.t, opts: cfg.opts })
-    setEditVal(a[key] == null ? '' : String(a[key]))
+    const field = cfg.field || key
+    setEditCell({ id: a.id, key, field, t: cfg.t, opts: cfg.opts, list: cfg.list })
+    setEditVal(a[field] == null ? '' : String(a[field]))
   }
   function cancelEdit() { setEditCell(null); setEditVal('') }
   async function commitEdit() {
     if (!editCell) return
-    const { id, key } = editCell
+    const { id, field } = editCell
     setEditCell(null)
     const acc = accounts.find(x => x.id === id)
     if (!acc) return
-    const prev = acc[key]
+    const prev = acc[field]
     const nextVal = editVal === '' ? null : editVal
     if (String(prev ?? '') === String(nextVal ?? '')) return // не изменилось
     // оптимистично
-    setAccounts(list => list.map(x => x.id === id ? { ...x, [key]: nextVal } : x))
-    const r = await api(`/api/accounts/${id}`, { method: 'PATCH', body: JSON.stringify({ [key]: nextVal }) })
+    setAccounts(list => list.map(x => x.id === id ? { ...x, [field]: nextVal } : x))
+    const r = await api(`/api/accounts/${id}`, { method: 'PATCH', body: JSON.stringify({ [field]: nextVal }) })
     if (r && r.error) {
-      setAccounts(list => list.map(x => x.id === id ? { ...x, [key]: prev } : x)) // откат
+      setAccounts(list => list.map(x => x.id === id ? { ...x, [field]: prev } : x)) // откат
       showToast('Ошибка: ' + r.error)
     } else {
       pushAction({
-        label: key,
-        undo: () => applyPatch(id, { [key]: prev ?? null }),
-        redo: () => applyPatch(id, { [key]: nextVal }),
+        label: field,
+        undo: () => applyPatch(id, { [field]: prev ?? null }),
+        redo: () => applyPatch(id, { [field]: nextVal }),
       })
       showToast('Сохранено ✓', { label: '↺ Отмена', onClick: doUndo })
     }
@@ -1224,10 +1228,12 @@ export default function Home() {
                 if (navigator.clipboard?.writeText) navigator.clipboard.writeText(v)
                 showToast('Скопировано: ' + v)
               }) : undefined)
+          const isEditable = !!cfg && !isStatus
           return (
-            <td key={c.key} className={(c.align==='r'?'r':'') + (isMetric?' cell-copy':'')}
+            <td key={c.key} className={(c.align==='r'?'r':'') + (isMetric?' cell-copy':'') + (isEditable?' cell-edit-h':'')}
+                title={isEditable && !editing ? 'Двойной клик — править' : undefined}
                 onClick={onCellClick}
-                onDoubleClick={cfg && !isStatus ? (e=>{e.stopPropagation();clearTimeout(openTimer.current);startEdit(a,c.key)}) : undefined}>
+                onDoubleClick={isEditable ? (e=>{e.stopPropagation();clearTimeout(openTimer.current);startEdit(a,c.key)}) : undefined}>
               {editing ? (
                 cfg.t==='select' ? (
                   <select autoFocus className="cell-edit" value={editVal}
@@ -1238,7 +1244,7 @@ export default function Home() {
                   </select>
                 ) : (
                   <input autoFocus className="cell-edit" type={cfg.t==='date'?'date':'text'} value={editVal}
-                         list={cfg.t==='combo'?`dl-${c.key}`:undefined}
+                         list={cfg.t==='combo'?(cfg.list||`dl-${c.key}`):undefined}
                          onChange={e=>setEditVal(e.target.value)} onBlur={commitEdit}
                          onKeyDown={e=>{if(e.key==='Enter')commitEdit();if(e.key==='Escape'){e.preventDefault();cancelEdit()}}}
                          onClick={e=>e.stopPropagation()} onDoubleClick={e=>e.stopPropagation()}/>
@@ -1356,6 +1362,8 @@ export default function Home() {
         .cell-sm{font-size:11px;color:var(--t2);max-width:120px;overflow:hidden;text-overflow:ellipsis;display:inline-block}
         .cell-edit{width:100%;background:var(--s1);border:1px solid var(--acc);border-radius:4px;padding:3px 6px;color:var(--t);font-size:12px;font-family:'Inter',sans-serif;outline:none}
         .cell-copy{cursor:copy}
+        .tbl-wrap tbody td.cell-edit-h{cursor:text}
+        .tbl-wrap tbody td.cell-edit-h:hover{box-shadow:inset 0 0 0 1px var(--bd2)}
         .ban-chip{margin-left:6px;background:rgba(240,85,85,.15);border:1px solid rgba(240,85,85,.4);color:#f05555;font-size:9px;padding:1px 6px;border-radius:8px;font-family:'Inter',sans-serif;white-space:nowrap}
         .camp-list{display:flex;flex-direction:column;gap:2px;margin-bottom:4px}
         .camp-row{display:flex;align-items:center;gap:8px;padding:4px 8px;background:var(--s2);border:1px solid var(--bd);border-radius:5px;font-size:12px}
