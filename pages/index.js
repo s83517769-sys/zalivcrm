@@ -2342,14 +2342,18 @@ function MetricsTab({ accountId, metrics, onAdd, onRefresh }) {
   const totalConv = view.reduce((s,m)=>s+(+m.conversions||0),0)
   const avgCpc = totalClicks > 0 ? totalCost / totalClicks : 0
 
-  // SVG-график: спенд столбцами + конверсии линией
-  const W=520, H=120, pad=16
+  // SVG-график: спенд столбцами + конверсии линией. Слева — старые дни, справа — сегодня.
+  // padTop оставляем под подписи спенда над столбиками, padBot — под подписи дат.
+  const W=520, H=144, padTop=18, padBot=22
   const maxCost = Math.max(1, ...view.map(m=>+m.cost_usd||0))
   const maxConv = Math.max(1, ...view.map(m=>+m.conversions||0))
-  const barW = view.length ? (W-2*pad)/view.length : 0
+  const barW = view.length ? (W-2*16)/view.length : 0
+  const xPad = 16
+  // Прореживание подписей чтобы не наезжали друг на друга (минимум ~36px на подпись)
+  const labelStep = Math.max(1, Math.ceil(view.length / 14))
   const convPts = view.map((m,i)=>{
-    const cx = pad + i*barW + barW/2
-    const cy = H-pad - ((+m.conversions||0)/maxConv)*(H-2*pad)
+    const cx = xPad + i*barW + barW/2
+    const cy = H-padBot - ((+m.conversions||0)/maxConv)*(H-padTop-padBot)
     return `${cx.toFixed(1)},${cy.toFixed(1)}`
   }).join(' ')
 
@@ -2368,15 +2372,36 @@ function MetricsTab({ accountId, metrics, onAdd, onRefresh }) {
       </div>
 
       {view.length > 0 ? (
-        <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:130,background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:6,marginBottom:10}}>
+        <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:150,background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:6,marginBottom:10}}>
           {view.map((m,i)=>{
-            const h = ((+m.cost_usd||0)/maxCost)*(H-2*pad)
-            return <rect key={i} x={(pad+i*barW+1).toFixed(1)} y={(H-pad-h).toFixed(1)} width={Math.max(1,barW-2).toFixed(1)} height={h.toFixed(1)} fill="rgba(34,209,122,.45)"/>
+            const cost = +m.cost_usd || 0
+            const h = (cost/maxCost)*(H-padTop-padBot)
+            const x = xPad + i*barW
+            const y = H-padBot-h
+            const cx = x + barW/2
+            const showLabel = i % labelStep === 0 || i === view.length - 1
+            return (
+              <g key={i}>
+                <rect x={(x+1).toFixed(1)} y={y.toFixed(1)} width={Math.max(1,barW-2).toFixed(1)} height={h.toFixed(1)} fill="rgba(34,209,122,.45)">
+                  <title>{`${fmtShortDate(m.metric_date)} — $${cost.toFixed(2)}`}</title>
+                </rect>
+                {showLabel && cost > 0 && (
+                  <text x={cx.toFixed(1)} y={(y-3).toFixed(1)} fontSize="8.5" fill="#22d17a" textAnchor="middle" fontFamily="JetBrains Mono">
+                    ${cost >= 1000 ? Math.round(cost) : cost.toFixed(0)}
+                  </text>
+                )}
+                {showLabel && (
+                  <text x={cx.toFixed(1)} y={(H-6).toFixed(1)} fontSize="8.5" fill="var(--t3)" textAnchor="middle" fontFamily="JetBrains Mono">
+                    {fmtShortDate(m.metric_date)}
+                  </text>
+                )}
+              </g>
+            )
           })}
           {maxConv>0 && <polyline points={convPts} fill="none" stroke="#f5a623" strokeWidth="1.5"/>}
           {view.map((m,i)=>{
-            const cx = pad + i*barW + barW/2
-            const cy = H-pad - ((+m.conversions||0)/maxConv)*(H-2*pad)
+            const cx = xPad + i*barW + barW/2
+            const cy = H-padBot - ((+m.conversions||0)/maxConv)*(H-padTop-padBot)
             return (+m.conversions||0)>0 ? <circle key={i} cx={cx.toFixed(1)} cy={cy.toFixed(1)} r="2" fill="#f5a623"/> : null
           })}
         </svg>
