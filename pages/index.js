@@ -2250,6 +2250,83 @@ function fmtShortDate(iso) {
   return m ? `${m[3]}.${m[2]}` : String(iso)
 }
 
+function HourlySection({ accountId }) {
+  const [day, setDay] = useState('today')
+  const [data, setData] = useState(null)  // null = loading, {} = empty
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    api(`/api/metrics-hourly?accountId=${accountId}&day=${day}`)
+      .then(r => { if (!cancelled) setData(r || {}) })
+      .catch(() => { if (!cancelled) setData({}) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [accountId, day])
+
+  const hours = data?.hours || []
+  const total = data?.total || 0
+  const maxCost = Math.max(1, ...hours.map(h => +h.cost || 0))
+  const nonZero = hours.filter(h => h.cost > 0)
+  const tzLabel = data?.timezone || ''
+  const spendByUserTz = !!data?.spend_by_user_tz
+
+  // SVG: 24 столбика
+  const W = 520, H = 110, pad = 16
+  const barW = (W - 2*pad) / 24
+
+  return (
+    <div style={{marginBottom:14}}>
+      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
+        <div style={{fontSize:11,color:'var(--t2)',fontWeight:600,textTransform:'uppercase',letterSpacing:'.05em'}}>Спенд по часам</div>
+        <div style={{display:'flex',gap:4}}>
+          {[['today','Сегодня'],['yesterday','Вчера']].map(([k,l])=>(
+            <button key={k} className={`btn${day===k?' btn-acc':''}`} style={{padding:'3px 9px',fontSize:11}} onClick={()=>setDay(k)}>{l}</button>
+          ))}
+        </div>
+        <div style={{marginLeft:'auto',display:'flex',gap:14,fontFamily:'JetBrains Mono',fontSize:11,color:'var(--t3)'}}>
+          {tzLabel && <span title={spendByUserTz?'Пересчёт под user_timezone (тумблер ВКЛ)':'По поясу аккаунта (как в Google Ads)'}>tz: <b style={{color:'var(--t2)'}}>{tzLabel}</b></span>}
+          <span>Σ: <b style={{color:'#22d17a'}}>${total.toFixed(2)}</b></span>
+        </div>
+      </div>
+
+      {loading ? (
+        <div style={{padding:'24px',textAlign:'center',color:'var(--t3)',fontSize:12,background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:6}}>Загрузка…</div>
+      ) : nonZero.length === 0 ? (
+        <div style={{padding:'24px',textAlign:'center',color:'var(--t3)',fontSize:12,background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:6}}>Нет почасовых данных за {day==='today'?'сегодня':'вчера'}</div>
+      ) : (
+        <>
+          <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:120,background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:6,marginBottom:8}}>
+            {hours.map((h,i)=>{
+              const bh = ((+h.cost||0)/maxCost)*(H-2*pad)
+              return (
+                <g key={i}>
+                  <rect x={(pad+i*barW+1).toFixed(1)} y={(H-pad-bh).toFixed(1)} width={Math.max(1,barW-2).toFixed(1)} height={bh.toFixed(1)} fill="rgba(91,110,245,.55)">
+                    <title>{`${String(h.hour).padStart(2,'0')}:00 — $${(+h.cost||0).toFixed(2)}`}</title>
+                  </rect>
+                  {i%4===0 && <text x={(pad+i*barW+barW/2).toFixed(1)} y={H-3} fontSize="8" fill="var(--t3)" textAnchor="middle">{String(h.hour).padStart(2,'0')}</text>}
+                </g>
+              )
+            })}
+          </svg>
+          <div style={{background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:6,padding:'8px 10px'}}>
+            <div style={{fontSize:10,color:'var(--t3)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:6}}>Час → спенд</div>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(110px,1fr))',gap:'4px 12px',fontFamily:'JetBrains Mono',fontSize:11}}>
+              {nonZero.map(h=>(
+                <div key={h.hour} style={{display:'flex',justifyContent:'space-between',gap:8}}>
+                  <span style={{color:'var(--t3)'}}>{String(h.hour).padStart(2,'0')}:00</span>
+                  <span style={{color:'#22d17a'}}>${(+h.cost||0).toFixed(2)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 function MetricsTab({ accountId, metrics, onAdd, onRefresh }) {
   const today = new Date().toISOString().split('T')[0]
   const [row, setRow] = useState({ metric_date: today, clicks:'', cpc_local:'', cpc_usd:'', cost_usd:'', conversions:'' })
@@ -2278,6 +2355,7 @@ function MetricsTab({ accountId, metrics, onAdd, onRefresh }) {
 
   return (
     <div>
+      <HourlySection accountId={accountId}/>
       <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
         {[['7','7 дней'],['30','30 дней'],['all','Всё']].map(([k,l])=>(
           <button key={k} className={`btn${period===k?' btn-acc':''}`} style={{padding:'3px 9px',fontSize:11}} onClick={()=>setPeriod(k)}>{l}</button>
