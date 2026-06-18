@@ -735,7 +735,7 @@ export default function Home() {
   }
   // Значение поля для копирования: обычные поля аккаунта + метрики из metricsSummary
   function copyValOf(a, field) {
-    if (field === 'today_cost' || field === 'yest_cost' || field === 'clicks') {
+    if (field === 'today_cost' || field === 'yest_cost' || field === 'clicks' || field === 'cpa') {
       const mt = metricsOf(a, metricsSummary)
       const n = +mt[field] || 0
       if (!n) return ''
@@ -1213,9 +1213,20 @@ export default function Home() {
           const isStatus = c.key==='status'
           const cfg = EDITABLE[c.key]
           const editing = editCell && editCell.id===a.id && editCell.key===c.key
+          const isMetric = c.key==='today_cost' || c.key==='yest_cost' || c.key==='clicks' || c.key==='cpa'
+          const onCellClick = isStatus
+            ? (e=>{e.stopPropagation();setStatusPopup({id:a.id,x:e.clientX,y:e.clientY})})
+            : (isMetric ? (e=>{
+                e.stopPropagation()
+                clearTimeout(openTimer.current)
+                const v = copyValOf(a, c.key)
+                if (!v) { showToast('Пусто'); return }
+                if (navigator.clipboard?.writeText) navigator.clipboard.writeText(v)
+                showToast('Скопировано: ' + v)
+              }) : undefined)
           return (
-            <td key={c.key} className={c.align==='r'?'r':undefined}
-                onClick={isStatus ? (e=>{e.stopPropagation();setStatusPopup({id:a.id,x:e.clientX,y:e.clientY})}) : undefined}
+            <td key={c.key} className={(c.align==='r'?'r':'') + (isMetric?' cell-copy':'')}
+                onClick={onCellClick}
                 onDoubleClick={cfg && !isStatus ? (e=>{e.stopPropagation();clearTimeout(openTimer.current);startEdit(a,c.key)}) : undefined}>
               {editing ? (
                 cfg.t==='select' ? (
@@ -1344,6 +1355,7 @@ export default function Home() {
         .badge-dot{width:5px;height:5px;border-radius:50%;flex-shrink:0}
         .cell-sm{font-size:11px;color:var(--t2);max-width:120px;overflow:hidden;text-overflow:ellipsis;display:inline-block}
         .cell-edit{width:100%;background:var(--s1);border:1px solid var(--acc);border-radius:4px;padding:3px 6px;color:var(--t);font-size:12px;font-family:'Inter',sans-serif;outline:none}
+        .cell-copy{cursor:copy}
         .ban-chip{margin-left:6px;background:rgba(240,85,85,.15);border:1px solid rgba(240,85,85,.4);color:#f05555;font-size:9px;padding:1px 6px;border-radius:8px;font-family:'Inter',sans-serif;white-space:nowrap}
         .camp-list{display:flex;flex-direction:column;gap:2px;margin-bottom:4px}
         .camp-row{display:flex;align-items:center;gap:8px;padding:4px 8px;background:var(--s2);border:1px solid var(--bd);border-radius:5px;font-size:12px}
