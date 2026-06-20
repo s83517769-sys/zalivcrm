@@ -2336,9 +2336,11 @@ function HourlySection({ accountId }) {
   const tzLabel = data?.timezone || ''
   const spendByUserTz = !!data?.spend_by_user_tz
 
-  // SVG: 24 столбика
-  const W = 520, H = 110, pad = 16
-  const barW = (W - 2*pad) / 24
+  // SVG: 24 столбика. padTop увеличен — там помещаются повёрнутые вертикально
+  // подписи спенда над каждым ненулевым столбиком (горизонтально 24 значения "$3.49"
+  // не разместить, столбики ~22px шириной — поэтому rotate -90 и мелкий шрифт).
+  const W = 520, H = 144, padTop = 42, padBot = 18, xPad = 16
+  const barW = (W - 2*xPad) / 24
 
   return (
     <div style={{marginBottom:14}}>
@@ -2361,24 +2363,45 @@ function HourlySection({ accountId }) {
         <div style={{padding:'24px',textAlign:'center',color:'var(--t3)',fontSize:12,background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:6}}>Нет почасовых данных за {day==='today'?'сегодня':'вчера'}</div>
       ) : (
         <>
-          <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:120,background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:6,marginBottom:8}}>
+          <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:150,background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:6,marginBottom:8}}>
             {hours.map((h,i)=>{
-              const bh = ((+h.cost||0)/maxCost)*(H-2*pad)
+              const cost = +h.cost || 0
+              const bh = (cost/maxCost)*(H-padTop-padBot)
+              const x = xPad + i*barW
+              const y = H-padBot-bh
+              const cx = x + barW/2
               return (
                 <g key={i}>
-                  <rect x={(pad+i*barW+1).toFixed(1)} y={(H-pad-bh).toFixed(1)} width={Math.max(1,barW-2).toFixed(1)} height={bh.toFixed(1)} fill="rgba(91,110,245,.55)">
-                    <title>{`${String(h.hour).padStart(2,'0')}:00 — $${(+h.cost||0).toFixed(2)}`}</title>
+                  <rect x={(x+1).toFixed(1)} y={y.toFixed(1)} width={Math.max(1,barW-2).toFixed(1)} height={bh.toFixed(1)} fill="rgba(91,110,245,.55)">
+                    <title>{`${String(h.hour).padStart(2,'0')}:00 — $${cost.toFixed(2)}`}</title>
                   </rect>
-                  {i%4===0 && <text x={(pad+i*barW+barW/2).toFixed(1)} y={H-3} fontSize="8" fill="var(--t3)" textAnchor="middle">{String(h.hour).padStart(2,'0')}</text>}
+                  {/* Подпись спенда — только на ненулевых столбиках, повёрнута на -90°
+                      (читается снизу-вверх), мелкий шрифт. Tooltip на hover остаётся
+                      на самом <rect> как fallback. */}
+                  {cost > 0 && (
+                    <text
+                      x={cx.toFixed(1)}
+                      y={(y - 3).toFixed(1)}
+                      fontSize="7.5"
+                      fill="#8a99ff"
+                      fontFamily="JetBrains Mono"
+                      textAnchor="start"
+                      transform={`rotate(-90 ${cx.toFixed(1)} ${(y - 3).toFixed(1)})`}>
+                      ${cost >= 100 ? Math.round(cost) : cost.toFixed(2)}
+                    </text>
+                  )}
+                  {i%4===0 && <text x={cx.toFixed(1)} y={H-5} fontSize="8" fill="var(--t3)" textAnchor="middle">{String(h.hour).padStart(2,'0')}</text>}
                 </g>
               )
             })}
           </svg>
           <div style={{background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:6,padding:'8px 10px'}}>
             <div style={{fontSize:10,color:'var(--t3)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:6}}>Час → спенд</div>
-            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(110px,1fr))',gap:'4px 12px',fontFamily:'JetBrains Mono',fontSize:11}}>
+            {/* columns: 110px → CSS multi-column раскладывает items column-major
+                (сверху вниз по столбцу, потом следующий столбец) — то, что нужно. */}
+            <div style={{columns:'110px',columnGap:'12px',fontFamily:'JetBrains Mono',fontSize:11}}>
               {nonZero.map(h=>(
-                <div key={h.hour} style={{display:'flex',justifyContent:'space-between',gap:8}}>
+                <div key={h.hour} style={{display:'flex',justifyContent:'space-between',gap:8,breakInside:'avoid',padding:'2px 0'}}>
                   <span style={{color:'var(--t3)'}}>{String(h.hour).padStart(2,'0')}:00</span>
                   <span style={{color:'#22d17a'}}>${(+h.cost||0).toFixed(2)}</span>
                 </div>
