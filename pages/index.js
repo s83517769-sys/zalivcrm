@@ -2473,20 +2473,6 @@ function MetricsTab({ accountId, metrics, onAdd, onRefresh }) {
         <div style={{padding:'24px',textAlign:'center',color:'var(--t3)',fontSize:12,background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:6,marginBottom:10}}>Нет данных за период</div>
       )}
 
-      {viewDesc.length > 0 && (
-        <div style={{background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:6,padding:'8px 10px',marginBottom:10}}>
-          <div style={{fontSize:10,color:'var(--t3)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:6}}>Спенд по дням</div>
-          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(110px,1fr))',gap:'4px 12px',fontFamily:'JetBrains Mono',fontSize:11}}>
-            {viewDesc.map(m=>(
-              <div key={m.id} title={m.metric_date} style={{display:'flex',justifyContent:'space-between',gap:8}}>
-                <span style={{color:'var(--t3)'}}>{fmtShortDate(m.metric_date)}</span>
-                <span style={{color:+m.cost_usd>0?'#22d17a':'var(--t3)'}}>{+m.cost_usd>0 ? '$'+Number(m.cost_usd).toFixed(0) : '—'}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       <table className="metric-table">
         <thead><tr>
           <th>Дата</th><th>Клики</th><th>CPC (лок.)</th><th>CPC $</th><th>Cost $</th><th>Конв.</th><th>CPA $</th>
