@@ -624,7 +624,26 @@ export default function Home() {
     setEditVal(a[field] == null ? '' : String(a[field]))
   }
   function cancelEdit() { setEditCell(null); setEditVal('') }
-  async function commitEdit() {
+
+  // Пока инлайн-редактор открыт: первый клик ВНЕ него глушится на этапе capture.
+  // Браузер уже успевает снять фокус с input → onBlur вызывает commitEdit (сохранение).
+  // Сам click после blur приходит сюда — preventDefault+stopPropagation, чтобы не
+  // открыть карточку / не скопировать метрику / не открыть другой редактор тем же кликом.
+  // Cleanup срабатывает уже на следующем рендере (после очистки editCell), так что
+  // следующий клик пользователя работает штатно.
+  useEffect(() => {
+    if (!editCell) return
+    const onDocClick = (e) => {
+      const t = e.target
+      if (t && t.closest && t.closest('.cell-edit')) return // клик внутри активного редактора — оставляем
+      e.preventDefault()
+      e.stopPropagation()
+    }
+    document.addEventListener('click', onDocClick, true)
+    return () => document.removeEventListener('click', onDocClick, true)
+  }, [editCell])
+
+async function commitEdit() {
     if (!editCell) return
     const { id, field } = editCell
     setEditCell(null)
