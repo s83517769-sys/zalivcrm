@@ -630,39 +630,51 @@ export default function Home() {
   }
   function cancelEdit() {
     setEditCell(null); setEditVal('')
+    editingRef.current = false
     clearTimeout(openTimer.current)
-    // Reset через макротаску: пришедший после blur click ещё попадёт в swallow,
-    // а если click не придёт (Esc без потери фокуса) — таймер очистит флаг.
-    setTimeout(() => { editingRef.current = false }, 0)
   }
 
-  // Постоянный capture-listener. Решает регрессию PR #57: тот listener висел
-  // на useEffect([editCell]) и cleanup срабатывал между blur (где editCell→null)
-  // и click — листенера уже не было. Здесь использу­ем ref, который переживает
-  // re-render, и сбрасываем его через setTimeout 0 (выполнится после click'а).
-  // Заодно clearTimeout(openTimer) на mousedown/click — если строка уже успела
-  // запустить 180ms-таймер открытия карточки, гасим и его.
+  // ── Подавление «клика, который закрыл редактор» ──
+  // Диагностика расширения подтвердила: blur редактора срабатывает на mousedown,
+  // setEditCell(null) и любой synchronous reset происходит ДО прихода click. PR
+  // #57/#58 чинили проверкой editingRef в click — там он уже был сброшен (через
+  // setTimeout 0, которая по очерёдности задач срабатывает раньше click).
+  // Правильно — ставить отдельный флаг suppressClickRef в фазе mousedown (когда
+  // редактор ещё открыт) и снимать его при первом следующем click; этот флаг
+  // живёт ровно от mousedown до click, как и просит сценарий.
+  const suppressClickRef = useRef(false)
+  const suppressTimer = useRef(null)
+  function armSuppressClick() {
+    suppressClickRef.current = true
+    clearTimeout(suppressTimer.current)
+    // Safety net на случай, если click не придёт (например, контекстное меню):
+    // через 400 мс снимем флаг, чтобы НЕ съесть последующие обычные клики.
+    suppressTimer.current = setTimeout(() => { suppressClickRef.current = false }, 400)
+  }
+
   useEffect(() => {
-    const swallowClick = (e) => {
+    const onMouseDown = (e) => {
       if (!editingRef.current) return
+      if (e.target?.closest?.('.cell-edit')) return
+      // Пометить, что предстоящий click — это «клик, закрывающий редактор».
+      // НЕ preventDefault: иначе input не получит focusout/blur и commit не сработает.
+      armSuppressClick()
+      clearTimeout(openTimer.current) // на всякий случай: если строка уже стартанула таймер
+    }
+    const onClick = (e) => {
+      if (!suppressClickRef.current) return
       if (e.target?.closest?.('.cell-edit')) return
       e.preventDefault()
       e.stopPropagation()
-      editingRef.current = false
-      clearTimeout(openTimer.current)
+      suppressClickRef.current = false
+      clearTimeout(suppressTimer.current)
+      clearTimeout(openTimer.current) // гасим 180ms-таймер, даже если он успел встать
     }
-    const swallowMd = (e) => {
-      if (!editingRef.current) return
-      if (e.target?.closest?.('.cell-edit')) return
-      // НЕ preventDefault — иначе input не получит blur и commit не сработает.
-      e.stopPropagation()
-      clearTimeout(openTimer.current)
-    }
-    document.addEventListener('click', swallowClick, true)
-    document.addEventListener('mousedown', swallowMd, true)
+    document.addEventListener('mousedown', onMouseDown, true)
+    document.addEventListener('click', onClick, true)
     return () => {
-      document.removeEventListener('click', swallowClick, true)
-      document.removeEventListener('mousedown', swallowMd, true)
+      document.removeEventListener('mousedown', onMouseDown, true)
+      document.removeEventListener('click', onClick, true)
     }
   }, [])
 
@@ -670,8 +682,8 @@ async function commitEdit() {
     if (!editCell) return
     const { id, field } = editCell
     setEditCell(null)
+    editingRef.current = false
     clearTimeout(openTimer.current)
-    setTimeout(() => { editingRef.current = false }, 0)
     const acc = accounts.find(x => x.id === id)
     if (!acc) return
     const prev = acc[field]
