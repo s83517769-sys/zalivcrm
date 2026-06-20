@@ -197,6 +197,10 @@ export default function Home() {
   const [editCell, setEditCell] = useState(null) // { id, key, t, opts }
   const [editVal, setEditVal] = useState('')
   const openTimer = useRef(null)
+  // «Активный редактор» хранится в ref-е, а не в state — переживёт re-render между
+  // blur и click (после commitEdit React успевает отрисовать с editCell=null, иначе
+  // capture-listener снимается раньше, чем сработает click → дровер открывается).
+  const editingRef = useRef(false)
 
   // Статусы из настроек пользователя (custom_statuses)
   const STATUSES = statusDefs.map(s => s.name)
@@ -622,31 +626,52 @@ export default function Home() {
     const field = cfg.field || key
     setEditCell({ id: a.id, key, field, t: cfg.t, opts: cfg.opts, list: cfg.list })
     setEditVal(a[field] == null ? '' : String(a[field]))
+    editingRef.current = true
   }
-  function cancelEdit() { setEditCell(null); setEditVal('') }
+  function cancelEdit() {
+    setEditCell(null); setEditVal('')
+    clearTimeout(openTimer.current)
+    // Reset через макротаску: пришедший после blur click ещё попадёт в swallow,
+    // а если click не придёт (Esc без потери фокуса) — таймер очистит флаг.
+    setTimeout(() => { editingRef.current = false }, 0)
+  }
 
-  // Пока инлайн-редактор открыт: первый клик ВНЕ него глушится на этапе capture.
-  // Браузер уже успевает снять фокус с input → onBlur вызывает commitEdit (сохранение).
-  // Сам click после blur приходит сюда — preventDefault+stopPropagation, чтобы не
-  // открыть карточку / не скопировать метрику / не открыть другой редактор тем же кликом.
-  // Cleanup срабатывает уже на следующем рендере (после очистки editCell), так что
-  // следующий клик пользователя работает штатно.
+  // Постоянный capture-listener. Решает регрессию PR #57: тот listener висел
+  // на useEffect([editCell]) и cleanup срабатывал между blur (где editCell→null)
+  // и click — листенера уже не было. Здесь использу­ем ref, который переживает
+  // re-render, и сбрасываем его через setTimeout 0 (выполнится после click'а).
+  // Заодно clearTimeout(openTimer) на mousedown/click — если строка уже успела
+  // запустить 180ms-таймер открытия карточки, гасим и его.
   useEffect(() => {
-    if (!editCell) return
-    const onDocClick = (e) => {
-      const t = e.target
-      if (t && t.closest && t.closest('.cell-edit')) return // клик внутри активного редактора — оставляем
+    const swallowClick = (e) => {
+      if (!editingRef.current) return
+      if (e.target?.closest?.('.cell-edit')) return
       e.preventDefault()
       e.stopPropagation()
+      editingRef.current = false
+      clearTimeout(openTimer.current)
     }
-    document.addEventListener('click', onDocClick, true)
-    return () => document.removeEventListener('click', onDocClick, true)
-  }, [editCell])
+    const swallowMd = (e) => {
+      if (!editingRef.current) return
+      if (e.target?.closest?.('.cell-edit')) return
+      // НЕ preventDefault — иначе input не получит blur и commit не сработает.
+      e.stopPropagation()
+      clearTimeout(openTimer.current)
+    }
+    document.addEventListener('click', swallowClick, true)
+    document.addEventListener('mousedown', swallowMd, true)
+    return () => {
+      document.removeEventListener('click', swallowClick, true)
+      document.removeEventListener('mousedown', swallowMd, true)
+    }
+  }, [])
 
 async function commitEdit() {
     if (!editCell) return
     const { id, field } = editCell
     setEditCell(null)
+    clearTimeout(openTimer.current)
+    setTimeout(() => { editingRef.current = false }, 0)
     const acc = accounts.find(x => x.id === id)
     if (!acc) return
     const prev = acc[field]
