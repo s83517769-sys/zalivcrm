@@ -104,6 +104,25 @@ const EMPTY_FORM = {
 
 function money(v) { const n=+v||0; if(!n) return '—'; return n>=1000?'$'+Math.round(n).toLocaleString('ru'):'$'+n.toFixed(0) }
 
+// Тех-статусы (от скрипта мониторинга). label — что показывать, color — цвет текста.
+// Легаси «Пауза» из старых записей в БД маппится на новый лейбл «Пауза/Оплата».
+// Старые статусы legacy-MCC-скрипта (РАБОТАЕТ / ВСЕ НА ПАУЗЕ / ПРОВЕРЬ АККАУНТ /
+// НЕТ СВЯЗИ) сохранены как есть — это другая ветка, не наш computeStatus.
+const TECH_STATUS_MAP = {
+  'Крутит':         { l:'Крутит',         c:'#22d17a' },
+  'Отклонены':      { l:'Отклонены',      c:'#f5a623' },
+  'Бюджет':         { l:'Бюджет',         c:'#f5a623' },
+  'Пауза/Оплата':   { l:'Пауза/Оплата',   c:'#f5a623' },
+  'Пауза':          { l:'Пауза/Оплата',   c:'#f5a623' }, // легаси-значение, показываем как новый
+  'РАБОТАЕТ':       { l:'РАБОТАЕТ',       c:'#22d17a' },
+  'ВСЕ НА ПАУЗЕ':   { l:'ПАУЗЕ',          c:'#6b7280' },
+  'ПАУЗЕ':          { l:'ПАУЗЕ',          c:'#6b7280' },
+  'ПРОВЕРЬ АККАУНТ':{ l:'ПРОВЕРЬ',        c:'#f5a623' },
+  'ПРОВЕРЬ':        { l:'ПРОВЕРЬ',        c:'#f5a623' },
+  'НЕТ СВЯЗИ':      { l:'НЕТ СВЯЗИ',      c:'#f05555' },
+}
+function techStatusInfo(s) { return s ? (TECH_STATUS_MAP[s] || null) : null }
+
 function metricsOf(a, summary) {
   const m = summary[a.id] || {}
   const t = m.today || {}, y = m.yesterday || {}
@@ -1173,21 +1192,9 @@ async function commitEdit() {
         </span>
       )
       case 'tech_status': {
-        // системные цвета: Крутит зелёный, Отклонены/Бюджет оранжевый, Пауза серый, Нет связи красный
-        const TS = {
-          'Крутит':{l:'Крутит',c:'#22d17a'},
-          'Отклонены':{l:'Отклонены',c:'#f5a623'},
-          'Бюджет':{l:'Бюджет',c:'#f5a623'},
-          'Пауза':{l:'Пауза',c:'#6b7280'},
-          // легаси-статусы старого скрипта
-          'РАБОТАЕТ':{l:'РАБОТАЕТ',c:'#22d17a'},
-          'ВСЕ НА ПАУЗЕ':{l:'ПАУЗЕ',c:'#6b7280'},
-          'ПАУЗЕ':{l:'ПАУЗЕ',c:'#6b7280'},
-          'ПРОВЕРЬ АККАУНТ':{l:'ПРОВЕРЬ',c:'#f5a623'},
-          'ПРОВЕРЬ':{l:'ПРОВЕРЬ',c:'#f5a623'},
-          'НЕТ СВЯЗИ':{l:'НЕТ СВЯЗИ',c:'#f05555'},
-        }
-        const info = TS[a.tech_status]
+        // Цвета и лейблы — из TECH_STATUS_MAP вверху файла (см. техStatusInfo).
+        // Крутит зелёный; Отклонены/Бюджет/Пауза-Оплата оранжевый; НЕТ СВЯЗИ красный.
+        const info = techStatusInfo(a.tech_status)
         const frozen = FROZEN.includes(a.status)
         const hasMetrics = mt.today_cost>0 || mt.clicks>0
         const note = a.tech_note || ''
@@ -2017,7 +2024,14 @@ async function commitEdit() {
                 <>
                   {Array.isArray(drawer.campaigns_snapshot) && drawer.campaigns_snapshot.length > 0 && (
                     <>
-                      <div className="dr-sec">Состояние кампаний{drawer.tech_status ? ` — ${drawer.tech_status}${drawer.tech_note?` (${drawer.tech_note})`:''}` : ''}</div>
+                      <div className="dr-sec">
+                        Состояние кампаний
+                        {drawer.tech_status && (() => {
+                          const info = techStatusInfo(drawer.tech_status)
+                          const label = info?.l || drawer.tech_status
+                          return <> — <span style={{color: info?.c || 'var(--t2)'}}>{label}</span>{drawer.tech_note ? ` (${drawer.tech_note})` : ''}</>
+                        })()}
+                      </div>
                       <div className="camp-list">
                         {drawer.campaigns_snapshot.map((c, i) => {
                           // приоритет вердикта: отклонено → пауза → крутит → бюджет → не крутит
