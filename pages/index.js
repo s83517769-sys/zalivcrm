@@ -110,18 +110,31 @@ function money(v) { const n=+v||0; if(!n) return '—'; return n>=1000?'$'+Math.
 // НЕТ СВЯЗИ) сохранены как есть — это другая ветка, не наш computeStatus.
 const TECH_STATUS_MAP = {
   'Крутит':         { l:'Крутит',         c:'#22d17a' },
+  'КРУТИТ':         { l:'Крутит',         c:'#22d17a' },
+  'крутит':         { l:'Крутит',         c:'#22d17a' },
   'Отклонены':      { l:'Отклонены',      c:'#f5a623' },
+  'ОТКЛОНЕНЫ':      { l:'Отклонены',      c:'#f5a623' },
   'Бюджет':         { l:'Бюджет',         c:'#f5a623' },
+  'БЮДЖЕТ':         { l:'Бюджет',         c:'#f5a623' },
   'Пауза/Оплата':   { l:'Пауза/Оплата',   c:'#f5a623' },
   'Пауза':          { l:'Пауза/Оплата',   c:'#f5a623' }, // легаси-значение, показываем как новый
-  'РАБОТАЕТ':       { l:'РАБОТАЕТ',       c:'#22d17a' },
-  'ВСЕ НА ПАУЗЕ':   { l:'ПАУЗЕ',          c:'#6b7280' },
-  'ПАУЗЕ':          { l:'ПАУЗЕ',          c:'#6b7280' },
+  'ПАУЗЕ':          { l:'Пауза/Оплата',   c:'#f5a623' }, // легаси MCC-скрипта тоже сюда
+  'ВСЕ НА ПАУЗЕ':   { l:'Пауза/Оплата',   c:'#f5a623' },
+  'РАБОТАЕТ':       { l:'Крутит',         c:'#22d17a' }, // легаси «РАБОТАЕТ» = Крутит
   'ПРОВЕРЬ АККАУНТ':{ l:'ПРОВЕРЬ',        c:'#f5a623' },
   'ПРОВЕРЬ':        { l:'ПРОВЕРЬ',        c:'#f5a623' },
   'НЕТ СВЯЗИ':      { l:'НЕТ СВЯЗИ',      c:'#f05555' },
+  'нет связи':      { l:'НЕТ СВЯЗИ',      c:'#f05555' },
 }
 function techStatusInfo(s) { return s ? (TECH_STATUS_MAP[s] || null) : null }
+// Каноническое имя тех-статуса для фильтрации/группировки/счётчиков. Любые разные
+// написания/легаси-значения схлопываются в единое имя (l из мапы); неизвестное —
+// возвращаем как есть, чтобы оно тоже попало в фильтр одной строкой.
+function canonTechStatus(s) {
+  if (!s) return ''
+  const info = TECH_STATUS_MAP[s]
+  return info ? info.l : s
+}
 
 function metricsOf(a, summary) {
   const m = summary[a.id] || {}
@@ -235,6 +248,11 @@ export default function Home() {
   const [bulkSaving, setBulkSaving] = useState(false)
 
   // ── Фильтры ──
+  // Сайдбар работает в одном из двух режимов: фильтр по ручному статусу ('status'),
+  // либо по тех-статусу от скрипта ('tech'). Выбор каждого режима сохраняется
+  // отдельно, при переключении не сбрасывается, но применяется только активный.
+  const [filterMode, setFilterMode] = useState('status') // 'status' | 'tech'
+  const [techStatusSel, setTechStatusSel] = useState([])
   const [statusSel, setStatusSel] = useState([])
   const [geoSel, setGeoSel] = useState([])
   const [zalivSel, setZalivSel] = useState([])
@@ -278,6 +296,8 @@ export default function Home() {
     try {
       const s = JSON.parse(localStorage.getItem('zcrm_table_settings') || '{}')
       if (Array.isArray(s.statusSel)) setStatusSel(s.statusSel)
+      if (Array.isArray(s.techStatusSel)) setTechStatusSel(s.techStatusSel)
+      if (s.filterMode === 'tech' || s.filterMode === 'status') setFilterMode(s.filterMode)
       if (Array.isArray(s.geoSel)) setGeoSel(s.geoSel)
       if (Array.isArray(s.zalivSel)) setZalivSel(s.zalivSel)
       if (Array.isArray(s.groupSel)) setGroupSel(s.groupSel)
@@ -402,10 +422,10 @@ export default function Home() {
   useEffect(() => {
     if (!loaded.current) return
     localStorage.setItem('zcrm_table_settings', JSON.stringify({
-      statusSel, geoSel, zalivSel, groupSel, funnelSel, formatSel,
+      statusSel, techStatusSel, filterMode, geoSel, zalivSel, groupSel, funnelSel, formatSel,
       launchFrom, launchTo, colOrder, colVisible, colWidths, pageSize, sort, panelOpen, groupBy, collapsedGroups,
     }))
-  }, [statusSel, geoSel, zalivSel, groupSel, funnelSel, formatSel, launchFrom, launchTo, colOrder, colVisible, colWidths, pageSize, sort, panelOpen, groupBy, collapsedGroups])
+  }, [statusSel, techStatusSel, filterMode, geoSel, zalivSel, groupSel, funnelSel, formatSel, launchFrom, launchTo, colOrder, colVisible, colWidths, pageSize, sort, panelOpen, groupBy, collapsedGroups])
 
   // Сохранение конфигурации колонок в БД (column_config) — переживает смену устройства. localStorage выше = кэш.
   useEffect(() => {
@@ -416,7 +436,7 @@ export default function Home() {
     }, 600)
   }, [colOrder, colVisible, colWidths])
 
-  useEffect(() => { setPage(1) }, [statusSel, geoSel, zalivSel, groupSel, funnelSel, formatSel, launchFrom, launchTo, search, pageSize, catFilter])
+  useEffect(() => { setPage(1) }, [statusSel, techStatusSel, filterMode, geoSel, zalivSel, groupSel, funnelSel, formatSel, launchFrom, launchTo, search, pageSize, catFilter])
 
   function cycleTheme() {
     const order = ['light', 'dark', 'system']
@@ -917,7 +937,7 @@ async function commitEdit() {
   }
 
   function resetFilters() {
-    setStatusSel([]); setGeoSel([]); setZalivSel([]); setGroupSel([])
+    setStatusSel([]); setTechStatusSel([]); setGeoSel([]); setZalivSel([]); setGroupSel([])
     setFunnelSel([]); setFormatSel('all'); setLaunchFrom(''); setLaunchTo('')
     setCatFilter(null)
   }
@@ -1025,7 +1045,13 @@ async function commitEdit() {
   // Базовый набор — все фильтры, КРОМЕ категорийного быстрого фильтра панели
   const filteredBase = accounts.filter(a => {
     if (search && !SEARCH_FIELDS.some(f => matchField(a, f, s))) return false
-    if (statusSel.length && !statusSel.includes(a.status)) return false
+    // Применяется только активный режим сайдбара: либо ручной статус, либо тех-статус.
+    // Выбор в неактивном режиме сохраняется в state, но фильтр не накладывается.
+    if (filterMode === 'status') {
+      if (statusSel.length && !statusSel.includes(a.status)) return false
+    } else if (filterMode === 'tech') {
+      if (techStatusSel.length && !techStatusSel.includes(canonTechStatus(a.tech_status))) return false
+    }
     if (geoSel.length && !geoSel.includes(a.geo)) return false
     if (zalivSel.length && !zalivSel.includes(a.zalivshik)) return false
     if (groupSel.length && !groupSel.includes(groupOf(a.name))) return false
@@ -1160,12 +1186,30 @@ async function commitEdit() {
 
   const statusGroups = {}
   STATUSES.forEach(st => { statusGroups[st] = accounts.filter(a => a.status === st).length })
+  // Список канонических тех-статусов с реальной встречаемостью, для сайдбара.
+  // Любые написания (Пауза / ПАУЗЕ / ВСЕ НА ПАУЗЕ / Пауза/Оплата) схлопываются в одно.
+  const techStatusGroups = {}
+  for (const a of accounts) {
+    const canon = canonTechStatus(a.tech_status)
+    if (!canon) continue
+    techStatusGroups[canon] = (techStatusGroups[canon] || 0) + 1
+  }
+  // Сортируем тех-статусы по приоритету проблемности; неизвестные — в конец.
+  const TECH_STATUS_ORDER = ['Крутит','Отклонены','Бюджет','Пауза/Оплата','ПРОВЕРЬ','НЕТ СВЯЗИ']
+  const techStatusList = Object.keys(techStatusGroups).sort((a, b) => {
+    const ia = TECH_STATUS_ORDER.indexOf(a), ib = TECH_STATUS_ORDER.indexOf(b)
+    if (ia === -1 && ib === -1) return a.localeCompare(b)
+    if (ia === -1) return 1
+    if (ib === -1) return -1
+    return ia - ib
+  })
 
   const totalAccounts = accounts.length
   const working = accounts.filter(a => a.status && a.status.toLowerCase().includes('крутит')).length
   const problems = accounts.filter(a => ['БАН','На смену','отклон','Дизапрув'].includes(a.status)).length
 
-  const activeFilterCount = statusSel.length + geoSel.length + zalivSel.length + groupSel.length +
+  const activeStatusSelCount = filterMode === 'status' ? statusSel.length : techStatusSel.length
+  const activeFilterCount = activeStatusSelCount + geoSel.length + zalivSel.length + groupSel.length +
     funnelSel.length + (formatSel !== 'all' ? 1 : 0) + (launchFrom ? 1 : 0) + (launchTo ? 1 : 0)
 
   const visibleCols = colOrder.map(k => COLMAP[k]).filter(c => c && colVisible[c.key])
@@ -1364,6 +1408,10 @@ async function commitEdit() {
         .sidebar{width:180px;background:var(--s1);border-right:1px solid var(--bd);overflow-y:auto;flex-shrink:0}
         .sb-sec{padding:8px 0 4px}
         .sb-lbl{font-size:10px;color:var(--t3);letter-spacing:.1em;text-transform:uppercase;padding:0 12px 4px}
+        .sb-tabs{display:flex;gap:0;padding:0 10px 6px;border-bottom:1px solid var(--bd);margin-bottom:6px}
+        .sb-tab{flex:1;background:none;border:none;color:var(--t3);font-size:11px;font-family:'Inter',sans-serif;padding:6px 4px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;transition:all .12s;outline:none}
+        .sb-tab:hover{color:var(--t2)}
+        .sb-tab.act{color:var(--acc);border-bottom-color:var(--acc);font-weight:500}
         .sbi{display:flex;align-items:center;gap:6px;padding:4px 12px;cursor:pointer;color:var(--t3);font-size:12px;border-left:2px solid transparent;transition:all .1s;user-select:none}
         .sbi:hover{background:var(--s2);color:var(--t)}
         .sbi.act{background:var(--s2);color:var(--t);border-left-color:var(--acc)}
@@ -1573,16 +1621,41 @@ async function commitEdit() {
           {/* SIDEBAR */}
           <div className="sidebar">
             <div className="sb-sec">
-              <div className="sb-lbl">Статус</div>
-              <div className={`sbi${statusSel.length===0?' act':''}`} onClick={()=>setStatusSel([])}>
-                <span className="sb-dot" style={{background:'var(--t3)'}}/>Все<span className="sb-cnt">{totalAccounts}</span>
+              <div className="sb-tabs">
+                <button className={`sb-tab${filterMode==='status'?' act':''}`} onClick={()=>setFilterMode('status')} title="Фильтр по ручному статусу аккаунта">По статусу</button>
+                <button className={`sb-tab${filterMode==='tech'?' act':''}`} onClick={()=>setFilterMode('tech')} title="Фильтр по тех-статусу от скрипта мониторинга">По технике</button>
               </div>
-              {STATUSES.filter(st=>statusGroups[st]>0).map(st=>(
-                <div key={st} className={`sbi${statusSel.includes(st)?' act':''}`} onClick={()=>toggleArr(st,statusSel,setStatusSel)}>
-                  <span className="sb-dot" style={{background:STATUS_COLOR[st]||'#6b7280'}}/>
-                  {st}<span className="sb-cnt">{statusGroups[st]}</span>
-                </div>
-              ))}
+              {filterMode === 'status' ? (
+                <>
+                  <div className={`sbi${statusSel.length===0?' act':''}`} onClick={()=>setStatusSel([])}>
+                    <span className="sb-dot" style={{background:'var(--t3)'}}/>Все<span className="sb-cnt">{totalAccounts}</span>
+                  </div>
+                  {STATUSES.filter(st=>statusGroups[st]>0).map(st=>(
+                    <div key={st} className={`sbi${statusSel.includes(st)?' act':''}`} onClick={()=>toggleArr(st,statusSel,setStatusSel)}>
+                      <span className="sb-dot" style={{background:STATUS_COLOR[st]||'#6b7280'}}/>
+                      {st}<span className="sb-cnt">{statusGroups[st]}</span>
+                    </div>
+                  ))}
+                </>
+              ) : (
+                <>
+                  <div className={`sbi${techStatusSel.length===0?' act':''}`} onClick={()=>setTechStatusSel([])}>
+                    <span className="sb-dot" style={{background:'var(--t3)'}}/>Все<span className="sb-cnt">{totalAccounts}</span>
+                  </div>
+                  {techStatusList.map(ts=>{
+                    const info = techStatusInfo(ts) // info.l === ts здесь, поэтому ключ-в-карте есть
+                    return (
+                      <div key={ts} className={`sbi${techStatusSel.includes(ts)?' act':''}`} onClick={()=>toggleArr(ts,techStatusSel,setTechStatusSel)}>
+                        <span className="sb-dot" style={{background:info?.c||'#6b7280'}}/>
+                        {ts}<span className="sb-cnt">{techStatusGroups[ts]}</span>
+                      </div>
+                    )
+                  })}
+                  {techStatusList.length === 0 && (
+                    <div className="sbi" style={{color:'var(--t3)',fontSize:11,cursor:'default'}}>нет данных от скрипта</div>
+                  )}
+                </>
+              )}
             </div>
           </div>
 
@@ -1628,11 +1701,19 @@ async function commitEdit() {
             {showFilters && (
               <div className="filters-panel">
                 <div className="fp-row">
-                  <span className="fp-lbl">Статус</span>
+                  <span className="fp-lbl">{filterMode==='tech' ? 'Тех-статус' : 'Статус'}</span>
                   <div className="chips">
-                    {STATUSES.map(st=>(
-                      <span key={st} className={`chip${statusSel.includes(st)?' act':''}`} onClick={()=>toggleArr(st,statusSel,setStatusSel)}>{st}</span>
-                    ))}
+                    {filterMode === 'status' ? (
+                      STATUSES.map(st=>(
+                        <span key={st} className={`chip${statusSel.includes(st)?' act':''}`} onClick={()=>toggleArr(st,statusSel,setStatusSel)}>{st}</span>
+                      ))
+                    ) : (
+                      techStatusList.length > 0
+                        ? techStatusList.map(ts=>(
+                            <span key={ts} className={`chip${techStatusSel.includes(ts)?' act':''}`} onClick={()=>toggleArr(ts,techStatusSel,setTechStatusSel)}>{ts}</span>
+                          ))
+                        : <span className="chip" style={{cursor:'default',color:'var(--t3)'}}>нет данных</span>
+                    )}
                   </div>
                 </div>
                 {geoOptions.length>0 && (
