@@ -1063,6 +1063,9 @@ async function commitEdit() {
   })
 
   const filtered = filteredBase.filter(a => {
+    // catFilter — это быстрый фильтр карточек в режиме «По статусу»;
+    // в режиме «По технике» аналогичную роль играет techStatusSel (см. filteredBase).
+    if (filterMode !== 'status') return true
     if (!catFilter) return true
     if (catFilter === 'no_signal') return a.tech_status === 'НЕТ СВЯЗИ'
     return categoryOf(a.status) === catFilter
@@ -1093,12 +1096,15 @@ async function commitEdit() {
   const rate = (cur) => currencyRates[cur] || 1
   const panel = (() => {
     let active = 0, problem = 0, terminal = 0, noSignal = 0, spendToday = 0, spendYest = 0
+    const techCounts = {}
     for (const a of filteredBase) {
       const cat = categoryOf(a.status)
       if (cat === 'active') active++
       else if (cat === 'problem') problem++
       else if (cat === 'terminal') terminal++
       if (a.tech_status === 'НЕТ СВЯЗИ') noSignal++
+      const canon = canonTechStatus(a.tech_status)
+      if (canon) techCounts[canon] = (techCounts[canon] || 0) + 1
       const m = metricsSummary[a.id]
       if (m) {
         const r = rate(m.currency || a.currency || 'USD')
@@ -1106,7 +1112,7 @@ async function commitEdit() {
         spendYest += (+m.yesterday?.cost_usd || 0) * r
       }
     }
-    return { total: filteredBase.length, active, problem, terminal, noSignal, spendToday, spendYest }
+    return { total: filteredBase.length, active, problem, terminal, noSignal, spendToday, spendYest, techCounts }
   })()
 
   // ── Правила подсветки строк (row_rules) ──
@@ -1782,22 +1788,44 @@ async function commitEdit() {
               <button className="dash-toggle" onClick={()=>setPanelOpen(v=>!v)} title={panelOpen?'Свернуть':'Развернуть'}>{panelOpen?'▾':'▸'}</button>
               {panelOpen ? (
                 <div className="dash-cards">
-                  <div className={`dcard${catFilter===null?' act':''}`} onClick={()=>setCatFilter(null)}>
-                    <div className="dc-l">Всего</div>
-                    <div className="dc-v">{panel.total}<span className="dc-sub"> из {totalAccounts}</span></div>
-                  </div>
-                  <div className={`dcard${catFilter==='active'?' act':''}`} onClick={()=>setCatFilter(c=>c==='active'?null:'active')}>
-                    <div className="dc-l">Актив</div><div className="dc-v" style={{color:'#22d17a'}}>{panel.active}</div>
-                  </div>
-                  <div className={`dcard${catFilter==='problem'?' act':''}`} onClick={()=>setCatFilter(c=>c==='problem'?null:'problem')}>
-                    <div className="dc-l">Проблема</div><div className="dc-v" style={{color:'#f5a623'}}>{panel.problem}</div>
-                  </div>
-                  <div className={`dcard${catFilter==='terminal'?' act':''}`} onClick={()=>setCatFilter(c=>c==='terminal'?null:'terminal')}>
-                    <div className="dc-l">Терминал</div><div className="dc-v" style={{color:'#f05555'}}>{panel.terminal}</div>
-                  </div>
-                  <div className={`dcard${catFilter==='no_signal'?' act':''}`} onClick={()=>setCatFilter(c=>c==='no_signal'?null:'no_signal')}>
-                    <div className="dc-l">НЕТ СВЯЗИ</div><div className="dc-v" style={{color:panel.noSignal>0?'#f05555':'var(--t3)'}}>{panel.noSignal}</div>
-                  </div>
+                  {filterMode === 'status' ? (
+                    <>
+                      <div className={`dcard${catFilter===null?' act':''}`} onClick={()=>setCatFilter(null)}>
+                        <div className="dc-l">Всего</div>
+                        <div className="dc-v">{panel.total}<span className="dc-sub"> из {totalAccounts}</span></div>
+                      </div>
+                      <div className={`dcard${catFilter==='active'?' act':''}`} onClick={()=>setCatFilter(c=>c==='active'?null:'active')}>
+                        <div className="dc-l">Актив</div><div className="dc-v" style={{color:'#22d17a'}}>{panel.active}</div>
+                      </div>
+                      <div className={`dcard${catFilter==='problem'?' act':''}`} onClick={()=>setCatFilter(c=>c==='problem'?null:'problem')}>
+                        <div className="dc-l">Проблема</div><div className="dc-v" style={{color:'#f5a623'}}>{panel.problem}</div>
+                      </div>
+                      <div className={`dcard${catFilter==='terminal'?' act':''}`} onClick={()=>setCatFilter(c=>c==='terminal'?null:'terminal')}>
+                        <div className="dc-l">Терминал</div><div className="dc-v" style={{color:'#f05555'}}>{panel.terminal}</div>
+                      </div>
+                      <div className={`dcard${catFilter==='no_signal'?' act':''}`} onClick={()=>setCatFilter(c=>c==='no_signal'?null:'no_signal')}>
+                        <div className="dc-l">НЕТ СВЯЗИ</div><div className="dc-v" style={{color:panel.noSignal>0?'#f05555':'var(--t3)'}}>{panel.noSignal}</div>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className={`dcard${techStatusSel.length===0?' act':''}`} onClick={()=>setTechStatusSel([])}>
+                        <div className="dc-l">Всего</div>
+                        <div className="dc-v">{panel.total}<span className="dc-sub"> из {totalAccounts}</span></div>
+                      </div>
+                      {techStatusList.map(ts=>{
+                        const info = techStatusInfo(ts)
+                        const cnt = panel.techCounts[ts] || 0
+                        const sel = techStatusSel.includes(ts)
+                        return (
+                          <div key={ts} className={`dcard${sel?' act':''}`} onClick={()=>toggleArr(ts,techStatusSel,setTechStatusSel)} title={`Тех-статус: ${ts}`}>
+                            <div className="dc-l">{ts}</div>
+                            <div className="dc-v" style={{color:info?.c||'var(--t)'}}>{cnt}</div>
+                          </div>
+                        )
+                      })}
+                    </>
+                  )}
                   <div className="dcard no-click">
                     <div className="dc-l">Спенд сегодня</div><div className="dc-v" style={{color:'#22d17a'}}>{panel.spendToday>0?'$'+Math.round(panel.spendToday).toLocaleString('ru'):'—'}</div>
                   </div>
@@ -1807,7 +1835,15 @@ async function commitEdit() {
                 </div>
               ) : (
                 <div className="dash-mini">
-                  Всего <b>{panel.total}</b> · <span style={{color:'#22d17a'}}>{panel.active}</span> · <span style={{color:'#f5a623'}}>{panel.problem}</span> · <span style={{color:'#f05555'}}>{panel.terminal}</span> · НЕТ СВЯЗИ <b style={{color:panel.noSignal>0?'#f05555':'inherit'}}>{panel.noSignal}</b> · сегодня <b style={{color:'#22d17a'}}>{panel.spendToday>0?'$'+Math.round(panel.spendToday).toLocaleString('ru'):'—'}</b>
+                  {filterMode === 'status' ? (
+                    <>Всего <b>{panel.total}</b> · <span style={{color:'#22d17a'}}>{panel.active}</span> · <span style={{color:'#f5a623'}}>{panel.problem}</span> · <span style={{color:'#f05555'}}>{panel.terminal}</span> · НЕТ СВЯЗИ <b style={{color:panel.noSignal>0?'#f05555':'inherit'}}>{panel.noSignal}</b></>
+                  ) : (
+                    <>Всего <b>{panel.total}</b>{techStatusList.map(ts=>{
+                      const info = techStatusInfo(ts)
+                      return <span key={ts}> · <span style={{color:info?.c||'inherit'}}>{ts} {panel.techCounts[ts]||0}</span></span>
+                    })}</>
+                  )}
+                  {' · сегодня '}<b style={{color:'#22d17a'}}>{panel.spendToday>0?'$'+Math.round(panel.spendToday).toLocaleString('ru'):'—'}</b>
                 </div>
               )}
             </div>
