@@ -1068,16 +1068,12 @@ async function commitEdit() {
   const s = search.toLowerCase()
   const categoryOf = (status) => statusDefs.find(d => d.name === status)?.category || 'neutral'
 
-  // Базовый набор — все фильтры, КРОМЕ категорийного быстрого фильтра панели
-  const filteredBase = accounts.filter(a => {
+  // Когорта — все фильтры КРОМЕ выбранного status/tech-status. На ней считаются
+  // счётчики групп (сайдбар и карточки), чтобы цифры рядом с группами не
+  // схлопывались до 0, когда выбрана одна из них. Поиск/гео/заливщик/воронка/
+  // формат/даты — учитываются (реальные размеры групп в текущем разрезе).
+  const cohort = accounts.filter(a => {
     if (search && !SEARCH_FIELDS.some(f => matchField(a, f, s))) return false
-    // Применяется только активный режим сайдбара: либо ручной статус, либо тех-статус.
-    // Выбор в неактивном режиме сохраняется в state, но фильтр не накладывается.
-    if (filterMode === 'status') {
-      if (statusSel.length && !statusSel.includes(a.status)) return false
-    } else if (filterMode === 'tech') {
-      if (techStatusSel.length && !techStatusSel.includes(effectiveTechStatus(a, watchdogHours))) return false
-    }
     if (geoSel.length && !geoSel.includes(a.geo)) return false
     if (zalivSel.length && !zalivSel.includes(a.zalivshik)) return false
     if (groupSel.length && !groupSel.includes(groupOf(a.name))) return false
@@ -1085,6 +1081,16 @@ async function commitEdit() {
     if (formatSel !== 'all' && a.format !== formatSel) return false
     if (launchFrom && (!a.launch_date || a.launch_date < launchFrom)) return false
     if (launchTo && (!a.launch_date || a.launch_date > launchTo)) return false
+    return true
+  })
+
+  // Базовый набор — когорта + активный фильтр группы (status или tech).
+  const filteredBase = cohort.filter(a => {
+    if (filterMode === 'status') {
+      if (statusSel.length && !statusSel.includes(a.status)) return false
+    } else if (filterMode === 'tech') {
+      if (techStatusSel.length && !techStatusSel.includes(effectiveTechStatus(a, watchdogHours))) return false
+    }
     return true
   })
 
@@ -1118,12 +1124,15 @@ async function commitEdit() {
     return sort.dir === 'asc' ? r : -r
   })
 
-  // ── Метрики сводной панели (по базовому набору) ──
+  // ── Метрики сводной панели ──
+  // Группы (active/problem/terminal/noSignal/techCounts) считаются по когорте —
+  // чтобы карточки не схлопывались до 0 при выборе одной группы. Спенд/total —
+  // по filteredBase: это про то, что реально показано в таблице сейчас.
   const rate = (cur) => currencyRates[cur] || 1
   const panel = (() => {
-    let active = 0, problem = 0, terminal = 0, noSignal = 0, spendToday = 0, spendYest = 0
+    let active = 0, problem = 0, terminal = 0, noSignal = 0
     const techCounts = {}
-    for (const a of filteredBase) {
+    for (const a of cohort) {
       const cat = categoryOf(a.status)
       if (cat === 'active') active++
       else if (cat === 'problem') problem++
@@ -1131,6 +1140,9 @@ async function commitEdit() {
       if (a.tech_status === 'НЕТ СВЯЗИ') noSignal++
       const canon = effectiveTechStatus(a, watchdogHours)
       if (canon) techCounts[canon] = (techCounts[canon] || 0) + 1
+    }
+    let spendToday = 0, spendYest = 0
+    for (const a of filteredBase) {
       const m = metricsSummary[a.id]
       if (m) {
         const r = rate(m.currency || a.currency || 'USD')
@@ -1216,12 +1228,15 @@ async function commitEdit() {
     matchedFields = [...set]
   }
 
+  // Счётчики групп для сайдбара — по когорте (без активного status/tech), чтобы
+  // выбор одной группы не схлопывал цифры остальных в 0, но поиск/гео/заливщик
+  // и прочие фильтры на них влияли (реальные размеры групп в текущем разрезе).
   const statusGroups = {}
-  STATUSES.forEach(st => { statusGroups[st] = accounts.filter(a => a.status === st).length })
-  // Список канонических тех-статусов с реальной встречаемостью, для сайдбара.
+  STATUSES.forEach(st => { statusGroups[st] = cohort.filter(a => a.status === st).length })
+  // Список канонических тех-статусов с реальной встречаемостью.
   // Любые написания (Пауза / ПАУЗЕ / ВСЕ НА ПАУЗЕ / Пауза/Оплата) схлопываются в одно.
   const techStatusGroups = {}
-  for (const a of accounts) {
+  for (const a of cohort) {
     const canon = effectiveTechStatus(a, watchdogHours)
     if (!canon) continue
     techStatusGroups[canon] = (techStatusGroups[canon] || 0) + 1
@@ -1668,7 +1683,7 @@ async function commitEdit() {
               {filterMode === 'status' ? (
                 <>
                   <div className={`sbi${statusSel.length===0?' act':''}`} onClick={()=>setStatusSel([])}>
-                    <span className="sb-dot" style={{background:'var(--t3)'}}/>Все<span className="sb-cnt">{totalAccounts}</span>
+                    <span className="sb-dot" style={{background:'var(--t3)'}}/>Все<span className="sb-cnt">{cohort.length}</span>
                   </div>
                   {STATUSES.filter(st=>statusGroups[st]>0).map(st=>(
                     <div key={st} className={`sbi${statusSel.includes(st)?' act':''}`} onClick={()=>selectOne(st,statusSel,setStatusSel)}>
@@ -1680,7 +1695,7 @@ async function commitEdit() {
               ) : (
                 <>
                   <div className={`sbi${techStatusSel.length===0?' act':''}`} onClick={()=>setTechStatusSel([])}>
-                    <span className="sb-dot" style={{background:'var(--t3)'}}/>Все<span className="sb-cnt">{totalAccounts}</span>
+                    <span className="sb-dot" style={{background:'var(--t3)'}}/>Все<span className="sb-cnt">{cohort.length}</span>
                   </div>
                   {techStatusList.map(ts=>{
                     const info = techStatusInfo(ts) // info.l === ts здесь, поэтому ключ-в-карте есть
