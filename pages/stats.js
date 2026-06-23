@@ -3,6 +3,12 @@ import Head from 'next/head'
 import Link from 'next/link'
 import { api } from '../lib/api'
 import { useAuth } from '../lib/useAuth'
+import { TECH_STATUS_MAP } from '../lib/techStatus'
+
+// Технические статусы для режима «По тех-статусам» — строки таблицы, в
+// каноническом порядке. Цвета берутся из TECH_STATUS_MAP — те же, что в
+// основной таблице аккаунтов, чтобы UI был согласованным.
+const TECH_STATUSES_FOR_STATS = ['Модерация','Крутит','Отклонены','Бюджет','Пауза/Оплата','ПРОВЕРЬ','НЕТ СВЯЗИ','Бан']
 
 const STATUSES = [
   { key: 'Пуск',          color: '#4ea8de', bg: 'rgba(78,168,222,.12)' },
@@ -34,6 +40,10 @@ export default function Stats() {
   const [loading, setLoading] = useState(true)
   const [dark, setDark] = useState(true)
   const [view, setView] = useState('status') // status | cost | zalivshik
+  // Внутри режима «По статусам»: показывать строки по ручным или по техническим.
+  // Дефолт — технические (вылизанные, отражают реальность от скрипта).
+  const [statusKind, setStatusKind] = useState('tech') // 'tech' | 'manual'
+  const [techStats, setTechStats] = useState(null) // { by_day:{}, first_snapshot:null }
 
   const now = new Date()
   const year = now.getFullYear()
@@ -48,6 +58,10 @@ export default function Stats() {
     const t = localStorage.getItem('zcrm_theme')
     if (t) setDark(t === 'dark')
     load()
+    // year/month фиксированы на «сейчас» при заходе на /stats — грузим один раз
+    api(`/api/stats/tech-status?year=${year}&month=${month + 1}`)
+      .then(r => setTechStats(r))
+      .catch(() => setTechStats({ by_day: {}, first_snapshot: null }))
   }, [])
 
   useEffect(() => {
@@ -227,56 +241,121 @@ export default function Stats() {
 
         <div className="table-wrap">
           {view === 'status' && (
-            <table>
-              <thead>
-                <tr>
-                  <th>Статус</th>
-                  {days.map(d => (
-                    <th key={d} className={d===today?'today-col':''}>
-                      {d}
-                      {d===today && <div style={{fontSize:8,color:'var(--acc)'}}>сег.</div>}
-                    </th>
-                  ))}
-                  <th>Итого</th>
-                </tr>
-              </thead>
-              <tbody>
-                {/* Общий итог */}
-                <tr className="total-row">
-                  <td><span className="status-label">Всего аккаунтов</span></td>
-                  {days.map(d => {
-                    const cnt = accounts.filter(a => new Date(a.created_at) <= new Date(year, month, d)).length
-                    return <td key={d} className={d===today?'today-col':''}>{cnt||<span className="cell-zero">—</span>}</td>
-                  })}
-                  <td>{accounts.length}</td>
-                </tr>
+            <>
+              <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
+                <span style={{fontSize:11,color:'var(--t3)'}}>Источник статуса:</span>
+                <button className={`btn${statusKind==='manual'?' act':''}`} onClick={()=>setStatusKind('manual')}>Ручные</button>
+                <button className={`btn${statusKind==='tech'?' act':''}`} onClick={()=>setStatusKind('tech')}>Технические</button>
+                {statusKind==='tech' && (
+                  <span style={{fontSize:11,color:'var(--t3)',marginLeft:'auto'}}>
+                    {techStats?.first_snapshot
+                      ? `история ведётся с ${new Date(techStats.first_snapshot).toLocaleDateString('ru')} — ранее данных нет`
+                      : 'история накапливается с первого ингеста после запуска фичи'}
+                  </span>
+                )}
+              </div>
+              {statusKind === 'manual' ? (
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Статус</th>
+                      {days.map(d => (
+                        <th key={d} className={d===today?'today-col':''}>
+                          {d}
+                          {d===today && <div style={{fontSize:8,color:'var(--acc)'}}>сег.</div>}
+                        </th>
+                      ))}
+                      <th>Итого</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {/* Общий итог */}
+                    <tr className="total-row">
+                      <td><span className="status-label">Всего аккаунтов</span></td>
+                      {days.map(d => {
+                        const cnt = accounts.filter(a => new Date(a.created_at) <= new Date(year, month, d)).length
+                        return <td key={d} className={d===today?'today-col':''}>{cnt||<span className="cell-zero">—</span>}</td>
+                      })}
+                      <td>{accounts.length}</td>
+                    </tr>
 
-                {activeStatuses.map(s => (
-                  <tr key={s.key}>
-                    <td>
-                      <span className="status-label">
-                        <span className="status-dot" style={{background:s.color}}/>
-                        {s.key}
-                      </span>
-                    </td>
-                    {days.map(d => {
-                      const cnt = getStatusCountForDay(d, s.key)
-                      return (
-                        <td key={d} className={d===today?'today-col':''}>
-                          {cnt > 0
-                            ? <span className="cell-val" style={{background:s.bg,color:s.color}}>{cnt}</span>
-                            : <span className="cell-zero">—</span>
-                          }
+                    {activeStatuses.map(s => (
+                      <tr key={s.key}>
+                        <td>
+                          <span className="status-label">
+                            <span className="status-dot" style={{background:s.color}}/>
+                            {s.key}
+                          </span>
                         </td>
+                        {days.map(d => {
+                          const cnt = getStatusCountForDay(d, s.key)
+                          return (
+                            <td key={d} className={d===today?'today-col':''}>
+                              {cnt > 0
+                                ? <span className="cell-val" style={{background:s.bg,color:s.color}}>{cnt}</span>
+                                : <span className="cell-zero">—</span>
+                              }
+                            </td>
+                          )
+                        })}
+                        <td style={{color:s.color,fontWeight:500}}>
+                          {accounts.filter(a=>a.status===s.key).length || '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Тех. статус</th>
+                      {days.map(d => (
+                        <th key={d} className={d===today?'today-col':''}>
+                          {d}
+                          {d===today && <div style={{fontSize:8,color:'var(--acc)'}}>сег.</div>}
+                        </th>
+                      ))}
+                      <th>Сейчас</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {TECH_STATUSES_FOR_STATS.map(ts => {
+                      const info = TECH_STATUS_MAP[ts]
+                      const color = info?.c || '#6b7280'
+                      const bg = `${color}1f` // ~12% alpha hex
+                      // Итого по дню сегодня — берём агрегат за today, если есть
+                      const todayStr = `${year}-${String(month+1).padStart(2,'0')}-${String(today).padStart(2,'0')}`
+                      const nowCnt = techStats?.by_day?.[todayStr]?.[ts] || 0
+                      return (
+                        <tr key={ts}>
+                          <td>
+                            <span className="status-label">
+                              <span className="status-dot" style={{background:color}}/>
+                              {ts}
+                            </span>
+                          </td>
+                          {days.map(d => {
+                            const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`
+                            const cnt = techStats?.by_day?.[dateStr]?.[ts] || 0
+                            const hasAnyDay = techStats?.by_day && techStats.by_day[dateStr]
+                            return (
+                              <td key={d} className={d===today?'today-col':''}>
+                                {cnt > 0
+                                  ? <span className="cell-val" style={{background:bg,color}}>{cnt}</span>
+                                  : <span className="cell-zero">—</span>
+                                }
+                              </td>
+                            )
+                          })}
+                          <td style={{color,fontWeight:500}}>{nowCnt || '—'}</td>
+                        </tr>
                       )
                     })}
-                    <td style={{color:s.color,fontWeight:500}}>
-                      {accounts.filter(a=>a.status===s.key).length || '—'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                  </tbody>
+                </table>
+              )}
+            </>
           )}
 
           {view === 'cost' && (
