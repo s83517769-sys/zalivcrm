@@ -210,6 +210,7 @@ export default function Home() {
   const [currencyRates, setCurrencyRates] = useState({ USD:1 })
   const [rowRules, setRowRules] = useState(DEFAULT_ROW_RULES)
   const [userTz, setUserTz] = useState(null) // часовой пояс пользователя (из настроек)
+  const [watchdogHours, setWatchdogHours] = useState(2) // порог оранжевой подсветки в колонке «Активность»
 
   // ── Сводная панель ──
   const [catFilter, setCatFilter] = useState(null) // 'active'|'problem'|'terminal'|'no_signal'|null
@@ -490,6 +491,8 @@ export default function Home() {
       setRowRules(sData.settings.row_rules)
     }
     if (sData?.settings?.user_timezone) setUserTz(sData.settings.user_timezone)
+    const wh = +sData?.settings?.watchdog_hours
+    if (Number.isFinite(wh) && wh > 0) setWatchdogHours(wh)
     // column_config из БД важнее localStorage (переживает смену устройства)
     const cc = sData?.settings?.column_config
     if (cc && Object.keys(cc).length) {
@@ -1279,8 +1282,11 @@ async function commitEdit() {
         } catch {
           txt = d.toLocaleString('ru', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })
         }
-        const stale = (Date.now() - d.getTime()) > 2*3600*1000
-        return <span className="cell-sm" style={{color:stale?'#f5a623':'var(--t2)',fontFamily:'JetBrains Mono'}} title={userTz?`по поясу ${userTz}`:undefined}>{txt}</span>
+        const stale = (Date.now() - d.getTime()) > watchdogHours*3600*1000
+        const tip = stale
+          ? `Молчит > ${watchdogHours} ч${userTz?` · по поясу ${userTz}`:''}`
+          : (userTz?`по поясу ${userTz}`:undefined)
+        return <span className="cell-sm" style={{color:stale?'#f5a623':'var(--t2)',fontFamily:'JetBrains Mono'}} title={tip}>{txt}</span>
       }
       case 'google_tag': return <span className="cell-sm muted">{a.google_tag||'—'}</span>
       case 'today_cost': return <span style={{color:mt.today_cost>0?'#22d17a':'var(--t3)',fontWeight:mt.today_cost>0?500:400}}>{money(mt.today_cost)}</span>
