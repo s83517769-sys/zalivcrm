@@ -7,12 +7,14 @@ import {
 
 const DEFAULT_WATCHDOG_HOURS = 2
 const DEFAULT_MODERATION_HOURS = 12
+const DEFAULT_ARCHIVE_AUTODELETE_DAYS = 30
 
 // Ключи, которые принимаем на запись
 const WRITABLE = [
   'custom_statuses', 'custom_groups', 'watchdog_hours', 'moderation_hours',
-  'column_config', 'row_rules', 'currency_rates', 'ui_density', 'ui_theme',
-  'status_automations', 'default_sort', 'user_timezone', 'spend_by_user_tz',
+  'archive_autodelete_days', 'column_config', 'row_rules', 'currency_rates',
+  'ui_density', 'ui_theme', 'status_automations', 'default_sort',
+  'user_timezone', 'spend_by_user_tz',
 ]
 
 function notEmpty(v) {
@@ -41,6 +43,7 @@ export default async function handler(req, res) {
         custom_groups: notEmpty(row?.custom_groups) ? row.custom_groups : DEFAULT_GROUPS,
         watchdog_hours: row?.watchdog_hours ?? DEFAULT_WATCHDOG_HOURS,
         moderation_hours: row?.moderation_hours ?? DEFAULT_MODERATION_HOURS,
+        archive_autodelete_days: row?.archive_autodelete_days ?? DEFAULT_ARCHIVE_AUTODELETE_DAYS,
         column_config: row?.column_config || {},
         // сохранённые правила + новые дефолтные, которых у пользователя ещё нет (по id)
         row_rules: notEmpty(row?.row_rules)
