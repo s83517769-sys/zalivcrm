@@ -53,9 +53,8 @@ export default async function handler(req, res) {
         if (autos.krutit_sets_crut_date && body.status.toLowerCase().includes('крутит') && !current.crut_date) {
           body.crut_date = today
         }
-        if (terminalNames.includes(body.status)) {
-          body.is_frozen = true
-          if (!current.ban_date) body.ban_date = today
+        if (terminalNames.includes(body.status) && !current.ban_date) {
+          body.ban_date = today
         }
       }
 

@@ -25,10 +25,7 @@ export default async function handler(req, res) {
 
       if (status === 'Пуск' && !row.launch_date) row.launch_date = today
       if (status.toLowerCase().includes('крутит') && !row.crut_date) row.crut_date = today
-      if (FROZEN.includes(status)) {
-        row.is_frozen = true
-        if (!row.ban_date) row.ban_date = today
-      }
+      if (FROZEN.includes(status) && !row.ban_date) row.ban_date = today
 
       // Пустые строки → null
       Object.keys(row).forEach(k => { if (row[k] === '') row[k] = null })
