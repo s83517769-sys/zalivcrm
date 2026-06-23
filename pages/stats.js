@@ -10,6 +10,22 @@ import { TECH_STATUS_MAP } from '../lib/techStatus'
 // основной таблице аккаунтов, чтобы UI был согласованным.
 const TECH_STATUSES_FOR_STATS = ['Модерация','Крутит','Отклонены','Бюджет','Пауза/Оплата','ПРОВЕРЬ','НЕТ СВЯЗИ','Бан']
 
+// Шапка ячейки-дня. Один компонент на все 4 таблицы — гарантирует, что
+// число и подпись «сег.» всегда выложены одинаково и не ломают высоту строки.
+// Day number сверху, «сег.» строго под ним с собственным line-height — никаких
+// перекрытий с первой строкой данных.
+function DayTh({ d, today }) {
+  const isToday = d === today
+  return (
+    <th className={isToday ? 'today-col' : ''}>
+      <div className="th-day">
+        <span className="th-day-num">{d}</span>
+        {isToday && <span className="th-day-tag">сег.</span>}
+      </div>
+    </th>
+  )
+}
+
 const STATUSES = [
   { key: 'Пуск',          color: '#4ea8de', bg: 'rgba(78,168,222,.12)' },
   { key: 'Модерация',     color: '#f5a623', bg: 'rgba(245,166,35,.12)' },
@@ -179,10 +195,21 @@ export default function Stats() {
         .sc-v.g{color:#22d17a}.sc-v.r{color:#f05555}.sc-v.a{color:#f5a623}
         .table-wrap{overflow-x:auto}
         table{border-collapse:collapse;font-size:11px;min-width:100%}
-        thead th{position:sticky;top:48px;background:var(--s2);padding:6px 8px;text-align:center;font-size:10px;color:var(--t3);font-weight:500;border-bottom:1px solid var(--bd);white-space:nowrap;z-index:20}
+        /* Шапка таблицы: sticky под топбаром. Разделитель — box-shadow
+           (border-bottom плохо ведёт себя с position:sticky при border-collapse).
+           vertical-align:top + единая разметка через .th-day → числа дней всегда
+           ровно у верхнего края, «сег.» компактно под числом, высота строки
+           предсказуема для всех ячеек. Увеличенный padding-bottom + явный gap
+           на первой строке данных — чтобы цифры дней визуально не «прилипали»
+           к первой строке («Всего аккаунтов» / «Cost $» / …). */
+        thead th{position:sticky;top:48px;background:var(--s2);padding:8px 8px 10px;text-align:center;font-size:11px;color:var(--t3);font-weight:500;box-shadow:inset 0 -1px 0 var(--bd);white-space:nowrap;z-index:20;vertical-align:top;line-height:1.2}
         thead th:first-child{text-align:left;position:sticky;left:0;z-index:30;min-width:120px}
+        .th-day{display:flex;flex-direction:column;align-items:center;gap:2px;line-height:1}
+        .th-day-num{font-size:11px;color:var(--t3);font-weight:500;line-height:1}
+        .th-day-tag{font-size:8px;color:var(--acc);line-height:1;letter-spacing:.03em}
         tbody tr:hover td{background:var(--s2)}
-        td{padding:5px 8px;text-align:center;border-bottom:1px solid var(--bd);white-space:nowrap;font-family:'JetBrains Mono',monospace}
+        tbody tr:first-child td{padding-top:8px}
+        td{padding:5px 8px;text-align:center;border-bottom:1px solid var(--bd);white-space:nowrap;font-family:'JetBrains Mono',monospace;vertical-align:middle}
         td:first-child{text-align:left;position:sticky;left:0;background:var(--bg);z-index:10;font-family:'Inter',sans-serif;font-size:11px}
         tbody tr:hover td:first-child{background:var(--s2)}
         .status-label{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500}
@@ -259,12 +286,7 @@ export default function Stats() {
                   <thead>
                     <tr>
                       <th>Статус</th>
-                      {days.map(d => (
-                        <th key={d} className={d===today?'today-col':''}>
-                          {d}
-                          {d===today && <div style={{fontSize:8,color:'var(--acc)'}}>сег.</div>}
-                        </th>
-                      ))}
+                      {days.map(d => <DayTh key={d} d={d} today={today}/>)}
                       <th>Итого</th>
                     </tr>
                   </thead>
@@ -310,12 +332,7 @@ export default function Stats() {
                   <thead>
                     <tr>
                       <th>Тех. статус</th>
-                      {days.map(d => (
-                        <th key={d} className={d===today?'today-col':''}>
-                          {d}
-                          {d===today && <div style={{fontSize:8,color:'var(--acc)'}}>сег.</div>}
-                        </th>
-                      ))}
+                      {days.map(d => <DayTh key={d} d={d} today={today}/>)}
                       <th>Сейчас</th>
                     </tr>
                   </thead>
@@ -363,12 +380,7 @@ export default function Stats() {
               <thead>
                 <tr>
                   <th>Метрика</th>
-                  {days.map(d => (
-                    <th key={d} className={d===today?'today-col':''}>
-                      {d}
-                      {d===today && <div style={{fontSize:8,color:'var(--acc)'}}>сег.</div>}
-                    </th>
-                  ))}
+                  {days.map(d => <DayTh key={d} d={d} today={today}/>)}
                   <th>Итого</th>
                 </tr>
               </thead>
@@ -436,12 +448,7 @@ export default function Stats() {
               <thead>
                 <tr>
                   <th>Заливщик / Статус</th>
-                  {days.map(d => (
-                    <th key={d} className={d===today?'today-col':''}>
-                      {d}
-                      {d===today && <div style={{fontSize:8,color:'var(--acc)'}}>сег.</div>}
-                    </th>
-                  ))}
+                  {days.map(d => <DayTh key={d} d={d} today={today}/>)}
                   <th>Сейчас</th>
                 </tr>
               </thead>
