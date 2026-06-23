@@ -194,22 +194,26 @@ export default function Stats() {
         .sc-v{font-size:18px;font-weight:500;font-family:'JetBrains Mono',monospace;color:var(--t)}
         .sc-v.g{color:#22d17a}.sc-v.r{color:#f05555}.sc-v.a{color:#f5a623}
         .table-wrap{overflow-x:auto}
-        table{border-collapse:collapse;font-size:11px;min-width:100%}
-        /* Шапка таблицы: sticky под топбаром. Разделитель — box-shadow
-           (border-bottom плохо ведёт себя с position:sticky при border-collapse).
-           vertical-align:top + единая разметка через .th-day → числа дней всегда
-           ровно у верхнего края, «сег.» компактно под числом, высота строки
-           предсказуема для всех ячеек. Увеличенный padding-bottom + явный gap
-           на первой строке данных — чтобы цифры дней визуально не «прилипали»
-           к первой строке («Всего аккаунтов» / «Cost $» / …). */
-        thead th{position:sticky;top:48px;background:var(--s2);padding:8px 8px 10px;text-align:center;font-size:11px;color:var(--t3);font-weight:500;box-shadow:inset 0 -1px 0 var(--bd);white-space:nowrap;z-index:20;vertical-align:top;line-height:1.2}
+        table{border-collapse:separate;border-spacing:0;font-size:11px;min-width:100%}
+        /* Sticky-шапка под топбаром. КЛЮЧЕВОЙ момент: border-collapse:separate
+           вместо collapse — без этого z-index на <th> при position:sticky не
+           работает надёжно в Chrome (известная проблема), thead перекрывала
+           первую строку только частично, отчего та визуально подрезалась
+           сверху. С border-spacing:0 геометрия не меняется, но stacking теперь
+           корректный: thead с z-index:20 полностью кроет первую строку tbody
+           при скролле, не пропуская её верх под себя.
+           Разделитель — outset box-shadow (1px ниже cell). vertical-align:top
+           + .th-day → числа дней у верхнего края, «сег.» строго под числом. */
+        thead th{position:sticky;top:48px;background:var(--s2);padding:8px 8px 12px;text-align:center;font-size:11px;color:var(--t3);font-weight:500;box-shadow:0 1px 0 var(--bd);white-space:nowrap;z-index:20;vertical-align:top;line-height:1.2}
         thead th:first-child{text-align:left;position:sticky;left:0;z-index:30;min-width:120px}
         .th-day{display:flex;flex-direction:column;align-items:center;gap:2px;line-height:1}
         .th-day-num{font-size:11px;color:var(--t3);font-weight:500;line-height:1}
         .th-day-tag{font-size:8px;color:var(--acc);line-height:1;letter-spacing:.03em}
         tbody tr:hover td{background:var(--s2)}
-        tbody tr:first-child td{padding-top:8px}
-        td{padding:5px 8px;text-align:center;border-bottom:1px solid var(--bd);white-space:nowrap;font-family:'JetBrains Mono',monospace;vertical-align:middle}
+        /* Первая строка tbody — увеличенный отступ сверху: при скролле sticky
+           шапка останавливается ровно над ней, отступ гарантирует читаемость. */
+        tbody tr:first-child td{padding-top:14px}
+        td{padding:5px 8px;text-align:center;border-bottom:1px solid var(--bd);white-space:nowrap;font-family:'JetBrains Mono',monospace;vertical-align:middle;background:var(--bg)}
         td:first-child{text-align:left;position:sticky;left:0;background:var(--bg);z-index:10;font-family:'Inter',sans-serif;font-size:11px}
         tbody tr:hover td:first-child{background:var(--s2)}
         .status-label{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500}
