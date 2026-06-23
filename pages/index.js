@@ -955,6 +955,12 @@ async function commitEdit() {
   function toggleArr(val, arr, setArr) {
     setArr(arr.includes(val) ? arr.filter(x => x !== val) : [...arr, val])
   }
+  // Одиночный выбор для статус-фильтров (sidebar и карточки). Повторный клик по
+  // активному пункту возвращает к «Все». Накопления нет — клик по другому
+  // пункту автоматически снимает прежний.
+  function selectOne(val, arr, setArr) {
+    setArr(arr.length === 1 && arr[0] === val ? [] : [val])
+  }
 
   function resetFilters() {
     setStatusSel([]); setTechStatusSel([]); setGeoSel([]); setZalivSel([]); setGroupSel([])
@@ -1665,7 +1671,7 @@ async function commitEdit() {
                     <span className="sb-dot" style={{background:'var(--t3)'}}/>Все<span className="sb-cnt">{totalAccounts}</span>
                   </div>
                   {STATUSES.filter(st=>statusGroups[st]>0).map(st=>(
-                    <div key={st} className={`sbi${statusSel.includes(st)?' act':''}`} onClick={()=>toggleArr(st,statusSel,setStatusSel)}>
+                    <div key={st} className={`sbi${statusSel.includes(st)?' act':''}`} onClick={()=>selectOne(st,statusSel,setStatusSel)}>
                       <span className="sb-dot" style={{background:STATUS_COLOR[st]||'#6b7280'}}/>
                       {st}<span className="sb-cnt">{statusGroups[st]}</span>
                     </div>
@@ -1679,7 +1685,7 @@ async function commitEdit() {
                   {techStatusList.map(ts=>{
                     const info = techStatusInfo(ts) // info.l === ts здесь, поэтому ключ-в-карте есть
                     return (
-                      <div key={ts} className={`sbi${techStatusSel.includes(ts)?' act':''}`} onClick={()=>toggleArr(ts,techStatusSel,setTechStatusSel)}>
+                      <div key={ts} className={`sbi${techStatusSel.includes(ts)?' act':''}`} onClick={()=>selectOne(ts,techStatusSel,setTechStatusSel)}>
                         <span className="sb-dot" style={{background:info?.c||'#6b7280'}}/>
                         {ts}<span className="sb-cnt">{techStatusGroups[ts]}</span>
                       </div>
@@ -1739,12 +1745,12 @@ async function commitEdit() {
                   <div className="chips">
                     {filterMode === 'status' ? (
                       STATUSES.map(st=>(
-                        <span key={st} className={`chip${statusSel.includes(st)?' act':''}`} onClick={()=>toggleArr(st,statusSel,setStatusSel)}>{st}</span>
+                        <span key={st} className={`chip${statusSel.includes(st)?' act':''}`} onClick={()=>selectOne(st,statusSel,setStatusSel)}>{st}</span>
                       ))
                     ) : (
                       techStatusList.length > 0
                         ? techStatusList.map(ts=>(
-                            <span key={ts} className={`chip${techStatusSel.includes(ts)?' act':''}`} onClick={()=>toggleArr(ts,techStatusSel,setTechStatusSel)}>{ts}</span>
+                            <span key={ts} className={`chip${techStatusSel.includes(ts)?' act':''}`} onClick={()=>selectOne(ts,techStatusSel,setTechStatusSel)}>{ts}</span>
                           ))
                         : <span className="chip" style={{cursor:'default',color:'var(--t3)'}}>нет данных</span>
                     )}
@@ -1846,7 +1852,7 @@ async function commitEdit() {
                         const cnt = panel.techCounts[ts] || 0
                         const sel = techStatusSel.includes(ts)
                         return (
-                          <div key={ts} className={`dcard${sel?' act':''}`} onClick={()=>toggleArr(ts,techStatusSel,setTechStatusSel)} title={`Тех-статус: ${ts}`}>
+                          <div key={ts} className={`dcard${sel?' act':''}`} onClick={()=>selectOne(ts,techStatusSel,setTechStatusSel)} title={`Тех-статус: ${ts}`}>
                             <div className="dc-l">{ts}</div>
                             <div className="dc-v" style={{color:info?.c||'var(--t)'}}>{cnt}</div>
                           </div>
