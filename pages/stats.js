@@ -29,6 +29,108 @@ function DayTh({ d, today }) {
   )
 }
 
+// Линейный график по дням/статусам. Источник — by_day-карта из снимков
+// (daily_tech_status или daily_manual_status, в зависимости от режима таблицы).
+// X — только дни со снимками (не будущие, не пустые). Y — count аккаунтов.
+// Каждый статус — отдельная цветная линия + точки в позициях дат. Цвета —
+// resolve через colorOf(name), которая для tech идёт в TECH_STATUS_MAP, для
+// manual — в custom_statuses → STATUSES → серый fallback.
+// Чистый SVG, без библиотек — как остальные графики в проекте.
+function StatusLineChart({ byDay, statuses, colorOf, today, year, month }) {
+  const todayStr = `${year}-${String(month+1).padStart(2,'0')}-${String(today).padStart(2,'0')}`
+  const dates = Object.keys(byDay || {})
+    .filter(d => d <= todayStr)   // защита: будущие даты не рисуем, даже если случайно прилетели
+    .sort()
+
+  if (dates.length === 0) {
+    return (
+      <div style={{marginTop:12,padding:'20px 16px',textAlign:'center',color:'var(--t3)',fontSize:12,background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:6}}>
+        История пока пуста — график появится с первого снимка
+      </div>
+    )
+  }
+
+  const W = 900, H = 240
+  const padL = 36, padR = 16, padT = 14, padB = 26
+  const plotW = W - padL - padR
+  const plotH = H - padT - padB
+
+  let maxY = 0
+  for (const d of dates) for (const s of statuses) {
+    const v = byDay[d]?.[s] || 0
+    if (v > maxY) maxY = v
+  }
+  if (maxY < 1) maxY = 1
+
+  const xOf = i => dates.length === 1
+    ? padL + plotW / 2
+    : padL + (i / (dates.length - 1)) * plotW
+  const yOf = v => padT + plotH - (v / maxY) * plotH
+
+  // Y-тики: 0, середина, максимум; уникальные
+  const yTicks = [...new Set([0, Math.ceil(maxY/2), maxY])]
+
+  // X-подписи: каждый ~N-ый день + последний, чтобы метки не наезжали
+  const xLabelStep = Math.max(1, Math.ceil(dates.length / 12))
+
+  // Полилайны и точки по статусам
+  const seriesByStatus = statuses.map(s => {
+    const pts = dates.map((d, i) => `${xOf(i)},${yOf(byDay[d]?.[s] || 0)}`).join(' ')
+    const color = colorOf(s)
+    const dots = dates.map((d, i) => ({
+      x: xOf(i), y: yOf(byDay[d]?.[s] || 0),
+      v: byDay[d]?.[s] || 0,
+      d: parseInt(d.split('-')[2]),
+    }))
+    return { s, pts, color, dots }
+  })
+
+  return (
+    <div style={{marginTop:12}}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:H,background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:6}}>
+        {/* Сетка + Y-подписи */}
+        {yTicks.map(v => {
+          const y = yOf(v)
+          return (
+            <g key={v}>
+              <line x1={padL} y1={y} x2={W-padR} y2={y} stroke="var(--bd)" strokeWidth="0.5"/>
+              <text x={padL-6} y={y+3} fontSize="9" textAnchor="end" fill="var(--t3)" fontFamily="JetBrains Mono,monospace">{v}</text>
+            </g>
+          )
+        })}
+        {/* X-подписи (дни) */}
+        {dates.map((d, i) => {
+          if (i % xLabelStep !== 0 && i !== dates.length - 1) return null
+          return (
+            <text key={d} x={xOf(i)} y={H-padB+14} fontSize="9" textAnchor="middle" fill="var(--t3)" fontFamily="JetBrains Mono,monospace">
+              {parseInt(d.split('-')[2])}
+            </text>
+          )
+        })}
+        {/* Линии */}
+        {seriesByStatus.map(({ s, pts, color }) => (
+          <polyline key={`l-${s}`} points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round"/>
+        ))}
+        {/* Точки (с тултипом) */}
+        {seriesByStatus.map(({ s, dots, color }) => dots.map((p, i) => (
+          <circle key={`p-${s}-${i}`} cx={p.x} cy={p.y} r="2.5" fill={color}>
+            <title>{`${s} · ${p.d}: ${p.v}`}</title>
+          </circle>
+        )))}
+      </svg>
+      {/* Легенда */}
+      <div style={{display:'flex',flexWrap:'wrap',gap:'6px 14px',marginTop:8,padding:'0 4px'}}>
+        {statuses.map(s => (
+          <span key={s} style={{display:'inline-flex',alignItems:'center',gap:6,fontSize:11,color:'var(--t2)'}}>
+            <span style={{width:14,height:2,background:colorOf(s),borderRadius:1,flexShrink:0}}/>
+            {s}
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 const STATUSES = [
   { key: 'Пуск',          color: '#4ea8de', bg: 'rgba(78,168,222,.12)' },
   { key: 'Модерация',     color: '#f5a623', bg: 'rgba(245,166,35,.12)' },
@@ -464,6 +566,20 @@ export default function Stats() {
                   </tbody>
                 </table>
               )}
+
+              {/* Линейный график — тот же источник, что выбран в таблице. Цвета линий
+                  resolve через тот же resolver, что и метки строк, поэтому «Бан» в
+                  легенде и «Бан» в таблице всегда одного цвета. */}
+              <StatusLineChart
+                byDay={statusKind === 'tech' ? techStats?.by_day : manualStats?.by_day}
+                statuses={statusKind === 'tech' ? activeTechStatuses : activeManualStatuses}
+                colorOf={s => statusKind === 'tech'
+                  ? (TECH_STATUS_MAP[s]?.c || '#6b7280')
+                  : colorOfManualStatus(s).color}
+                today={today}
+                year={year}
+                month={month}
+              />
             </>
           )}
 
