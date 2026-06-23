@@ -281,9 +281,12 @@ export default function Stats() {
         .th-day-num{font-size:11px;color:var(--t3);font-weight:500;line-height:1}
         .th-day-tag{font-size:8px;color:var(--acc);line-height:1;letter-spacing:.03em}
         tbody tr:hover td{background:var(--s2)}
-        /* Первая строка tbody — увеличенный отступ сверху: при скролле sticky
-           шапка останавливается ровно над ней, отступ гарантирует читаемость. */
-        tbody tr:first-child td{padding-top:14px}
+        /* Первая строка tbody — увеличенный отступ сверху + явный border-top
+           для гарантии видимого зазора: при скролле sticky шапка останавливается
+           ровно над ней, эта пара (padding + border) исключает любой визуальный
+           overlay, в т.ч. на «По метрикам» где первая ячейка cost-row под шапкой
+           ранее визуально сливалась с подписью «23 сег.». */
+        tbody tr:first-child td{padding-top:18px;border-top:1px solid var(--bd)}
         td{padding:5px 8px;text-align:center;border-bottom:1px solid var(--bd);white-space:nowrap;font-family:'JetBrains Mono',monospace;vertical-align:middle;background:var(--bg)}
         td:first-child{text-align:left;position:sticky;left:0;background:var(--bg);z-index:10;font-family:'Inter',sans-serif;font-size:11px}
         tbody tr:hover td:first-child{background:var(--s2)}
@@ -370,11 +373,16 @@ export default function Stats() {
                     </tr>
                   </thead>
                   <tbody>
-                    {/* Общий итог */}
+                    {/* Общий итог — сумма снимков за день по всем статусам.
+                        Дни без снимков (прошлое до запуска фичи / будущее) →
+                        «—», в отличие от старой логики проекции по created_at
+                        которая ошибочно заполняла будущие дни всеми аккаунтами. */}
                     <tr className="total-row">
                       <td><span className="status-label">Всего аккаунтов</span></td>
                       {days.map(d => {
-                        const cnt = accounts.filter(a => new Date(a.created_at) <= new Date(year, month, d)).length
+                        const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`
+                        const dayMap = manualStats?.by_day?.[dateStr]
+                        const cnt = (d > today || !dayMap) ? 0 : Object.values(dayMap).reduce((s,v)=>s+v, 0)
                         return <td key={d} className={d===today?'today-col':''}>{cnt||<span className="cell-zero">—</span>}</td>
                       })}
                       <td>{accounts.length}</td>
@@ -394,7 +402,8 @@ export default function Stats() {
                           </td>
                           {days.map(d => {
                             const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`
-                            const cnt = manualStats?.by_day?.[dateStr]?.[name] || 0
+                            // Defensive: будущие дни всегда пусты, даже если снимок случайно прилетел
+                            const cnt = d > today ? 0 : (manualStats?.by_day?.[dateStr]?.[name] || 0)
                             return (
                               <td key={d} className={d===today?'today-col':''}>
                                 {cnt > 0
@@ -437,8 +446,8 @@ export default function Stats() {
                           </td>
                           {days.map(d => {
                             const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`
-                            const cnt = techStats?.by_day?.[dateStr]?.[ts] || 0
-                            const hasAnyDay = techStats?.by_day && techStats.by_day[dateStr]
+                            // Defensive: будущие дни всегда пусты
+                            const cnt = d > today ? 0 : (techStats?.by_day?.[dateStr]?.[ts] || 0)
                             return (
                               <td key={d} className={d===today?'today-col':''}>
                                 {cnt > 0
