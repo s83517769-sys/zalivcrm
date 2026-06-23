@@ -26,6 +26,7 @@ export default function Settings() {
   const [customGroups, setCustomGroups] = useState([])
   const [watchdogHours, setWatchdogHours] = useState(2)
   const [moderationHours, setModerationHours] = useState(12)
+  const [archiveAutodeleteDays, setArchiveAutodeleteDays] = useState(30)
   const [userTz, setUserTz] = useState('Asia/Nicosia')
   const [tzSaving, setTzSaving] = useState(false)
   const [spendByUserTz, setSpendByUserTz] = useState(false)
@@ -57,6 +58,7 @@ export default function Settings() {
       setCustomGroups(s.settings.custom_groups || [])
       setWatchdogHours(s.settings.watchdog_hours ?? 2)
       setModerationHours(s.settings.moderation_hours ?? 12)
+      setArchiveAutodeleteDays(s.settings.archive_autodelete_days ?? 30)
       setRowRules(s.settings.row_rules || [])
       setRates({ USD:1, ...(s.settings.currency_rates || {}) })
       if (s.settings.user_timezone) setUserTz(s.settings.user_timezone)
@@ -221,6 +223,12 @@ export default function Settings() {
     const h = Math.max(1, parseInt(moderationHours) || 12)
     setModerationHours(h)
     if (await saveSettings({ moderation_hours: h })) showToast('Окно модерации сохранено ✓')
+  }
+
+  async function saveArchiveAutodelete() {
+    const d = Math.max(1, parseInt(archiveAutodeleteDays) || 30)
+    setArchiveAutodeleteDays(d)
+    if (await saveSettings({ archive_autodelete_days: d })) showToast('Срок автоудаления сохранён ✓')
   }
 
   return (
@@ -520,6 +528,19 @@ export default function Settings() {
             <button className="btn btn-acc" onClick={saveModeration}>Сохранить</button>
           </div>
           <div className="hint">Сколько часов новый аккаунт без активности считается на модерации. После этого окна — если ни одного клика/спенда так и не было — статус возвращается к тому, что шлёт скрипт (обычно «Пауза/Оплата»). По умолчанию 12 часов.</div>
+        </div>
+
+        {/* АРХИВ */}
+        <div className="card">
+          <h2>🗄 Архив</h2>
+          <div className="row">
+            <div className="fi" style={{maxWidth:160,marginBottom:0}}>
+              <label>Автоудаление через, дней</label>
+              <input type="number" min={1} value={archiveAutodeleteDays} onChange={e=>setArchiveAutodeleteDays(e.target.value)}/>
+            </div>
+            <button className="btn btn-acc" onClick={saveArchiveAutodelete}>Сохранить</button>
+          </div>
+          <div className="hint">Архивные аккаунты старше N дней удаляются навсегда при заходе на страницу «🗄 Архив». История в статистике (Бан, спенд, статусы за прошлые дни) сохраняется. По умолчанию 30 дней. Старые архивные строки без даты архивации (созданные до миграции) не удаляются.</div>
         </div>
       </div>
 

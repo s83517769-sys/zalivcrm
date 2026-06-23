@@ -113,6 +113,17 @@ export default async function handler(req, res) {
       if (changed) body.metrics_manual_override = overridden
     }
 
+    // archived_at — момент попадания в архив. Пишем только на переходе
+    // (false→true → now; true→false → null), чтобы повторный PATCH архивного
+    // не сбрасывал таймер автоудаления.
+    if ('is_archived' in body) {
+      if (body.is_archived === true && current.is_archived !== true) {
+        body.archived_at = now.toISOString()
+      } else if (body.is_archived === false && current.is_archived === true) {
+        body.archived_at = null
+      }
+    }
+
     const { error } = await supabaseAdmin
       .from('accounts')
       .update({ ...body, updated_at: now.toISOString() })

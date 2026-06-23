@@ -41,6 +41,17 @@ export default async function handler(req, res) {
   if (selErr) return res.status(500).json({ error: selErr.message })
 
   const now = new Date().toISOString()
+  // archived_at — момент попадания в архив. Только на переходе:
+  // false→true → now; true→false → null. Уже-архивные при повторном архивиро­
+  // вании НЕ сбрасывают таймер: применим archived_at = now ко всем ids, что
+  // в нашем массовом действии «архивировать» окей (юзер явно сказал «архив»);
+  // но: если в batch попали уже архивные, у них таймер обновится. На практике
+  // bulkArchive в UI вызывается только из главного списка, где архивных и так
+  // нет. Если что — будем рассинхронизировать построково, сейчас не нужно.
+  if ('is_archived' in patch) {
+    if (patch.is_archived === true) patch.archived_at = now
+    else if (patch.is_archived === false) patch.archived_at = null
+  }
   const { error: updErr } = await supabaseAdmin
     .from('accounts')
     .update({ ...patch, updated_at: now })

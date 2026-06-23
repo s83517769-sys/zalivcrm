@@ -22,12 +22,23 @@ export default function Archive() {
   const [dark, setDark] = useState(true)
   const [search, setSearch] = useState('')
   const [restoring, setRestoring] = useState(null)
+  const [deleting, setDeleting] = useState(false)
+  const [selected, setSelected] = useState(new Set())
   const [toast, setToast] = useState('')
 
   useEffect(() => {
     const t = localStorage.getItem('zcrm_theme')
     if (t) setDark(t === 'dark')
-    load()
+    // Автоудаление просроченных архивных аккаунтов делаем перед загрузкой
+    // списка (нет cron — триггерим с фронта при заходе на /archive).
+    // Снимки благодаря снятому каскаду остаются.
+    ;(async () => {
+      try {
+        const r = await api('/api/accounts/archive-cleanup', { method:'POST' })
+        if (r?.deleted > 0) showToast(`Автоудалено просрочкой: ${r.deleted}`)
+      } catch {}
+      load()
+    })()
   }, [])
 
   useEffect(() => { document.body.className = dark ? 'dark' : 'light' }, [dark])
@@ -52,7 +63,25 @@ export default function Archive() {
     await api(`/api/accounts/${id}`, { method:'PATCH', body: JSON.stringify({ is_archived: false }) })
     setRestoring(null)
     showToast('Аккаунт восстановлен ✓')
+    setSelected(s => { const n = new Set(s); n.delete(id); return n })
     await load()
+  }
+
+  async function deleteIds(ids) {
+    if (!ids.length) return
+    const ok = window.confirm(`Удалить навсегда ${ids.length} аккаунт(ов)? История в статистике сохранится.`)
+    if (!ok) return
+    setDeleting(true)
+    try {
+      const r = await api('/api/accounts/delete', { method:'POST', body: JSON.stringify({ ids }) })
+      showToast(`Удалено навсегда: ${r?.deleted ?? 0} ✓`)
+      setSelected(new Set())
+      await load()
+    } catch (e) {
+      showToast('Ошибка удаления')
+    } finally {
+      setDeleting(false)
+    }
   }
 
   function showToast(msg) { setToast(msg); setTimeout(() => setToast(''), 2200) }
@@ -101,6 +130,12 @@ export default function Archive() {
         .btn-restore{background:rgba(34,209,122,.1);border:1px solid rgba(34,209,122,.3);border-radius:3px;cursor:pointer;color:#22d17a;font-size:11px;padding:3px 10px;font-family:'Inter',sans-serif;white-space:nowrap}
         .btn-restore:hover{background:rgba(34,209,122,.2)}
         .btn-restore:disabled{opacity:.5;cursor:default}
+        .btn-delete{background:rgba(240,85,85,.1);border:1px solid rgba(240,85,85,.35);border-radius:4px;color:#f05555;font-size:11px;padding:4px 10px;font-family:'Inter',sans-serif;cursor:pointer;white-space:nowrap}
+        .btn-delete:hover{background:rgba(240,85,85,.2)}
+        .btn-delete:disabled{opacity:.5;cursor:default}
+        .btn-delete-row{background:rgba(240,85,85,.06);border:1px solid rgba(240,85,85,.25);border-radius:3px;color:#f05555;font-size:11px;padding:3px 8px;cursor:pointer;font-family:inherit}
+        .btn-delete-row:hover{background:rgba(240,85,85,.18)}
+        .btn-delete-row:disabled{opacity:.5;cursor:default}
         .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--s3);border:1px solid var(--bd2);border-radius:5px;padding:8px 16px;font-size:12px;color:var(--t);opacity:0;transition:all .2s;z-index:600;pointer-events:none;white-space:nowrap}
         .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
         .overlay{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:500}
@@ -132,12 +167,28 @@ export default function Archive() {
         <div className="srch">
           <input placeholder="Поиск по названию..." value={search} onChange={e=>setSearch(e.target.value)}/>
         </div>
+        {selected.size > 0 && (
+          <button className="btn-delete" disabled={deleting} onClick={()=>deleteIds([...selected])}>
+            {deleting?'...':`🗑 Удалить навсегда (${selected.size})`}
+          </button>
+        )}
         <span style={{fontSize:11,color:'var(--t3)',marginLeft:'auto'}}>{filtered.length} в архиве</span>
       </div>
 
       <div className="tbl-wrap">
         <table>
           <thead><tr>
+            <th style={{width:36}}>
+              <input
+                type="checkbox"
+                checked={filtered.length > 0 && filtered.every(a => selected.has(a.id))}
+                onChange={e => {
+                  if (e.target.checked) setSelected(new Set(filtered.map(a=>a.id)))
+                  else setSelected(new Set())
+                }}
+                title="Выделить все"
+              />
+            </th>
             <th style={{width:170}}>Аккаунт</th>
             <th style={{width:130}}>Статус</th>
             <th style={{width:80}}>Гео</th>
@@ -145,11 +196,22 @@ export default function Archive() {
             <th style={{width:110}}>Дата бана</th>
             <th style={{width:240}}>Причина бана</th>
             <th style={{width:100}}>Заливщик</th>
-            <th style={{width:110}}>Действия</th>
+            <th style={{width:160}}>Действия</th>
           </tr></thead>
           <tbody>
             {filtered.map(a => (
               <tr key={a.id}>
+                <td>
+                  <input
+                    type="checkbox"
+                    checked={selected.has(a.id)}
+                    onChange={e => setSelected(s => {
+                      const n = new Set(s)
+                      if (e.target.checked) n.add(a.id); else n.delete(a.id)
+                      return n
+                    })}
+                  />
+                </td>
                 <td>
                   <div className="acc-name">{a.name||'—'}</div>
                   <div className="acc-sub">{a.google_ads_id||''}</div>
@@ -165,15 +227,18 @@ export default function Archive() {
                 <td><span className="cell-sm">{a.ban_date||'—'}</span></td>
                 <td><span className="cell-sm muted" title={a.ban_reason||''}>{a.ban_reason||'—'}</span></td>
                 <td><span className="cell-sm">{a.zalivshik||'—'}</span></td>
-                <td>
+                <td style={{display:'flex',gap:6}}>
                   <button className="btn-restore" disabled={restoring===a.id} onClick={()=>restore(a.id)}>
-                    {restoring===a.id?'...':'↩ Восстановить'}
+                    {restoring===a.id?'...':'↩'}
+                  </button>
+                  <button className="btn-delete-row" disabled={deleting} onClick={()=>deleteIds([a.id])} title="Удалить навсегда">
+                    🗑
                   </button>
                 </td>
               </tr>
             ))}
             {filtered.length===0 && !loading && (
-              <tr><td colSpan={8} style={{textAlign:'center',padding:'40px',color:'var(--t3)'}}>
+              <tr><td colSpan={9} style={{textAlign:'center',padding:'40px',color:'var(--t3)'}}>
                 Архив пуст
               </td></tr>
             )}
