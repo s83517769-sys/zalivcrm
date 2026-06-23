@@ -29,10 +29,9 @@ export default async function handler(req, res) {
     if (body.status && body.status.toLowerCase().includes('крутит') && !body.crut_date) {
       body.crut_date = today
     }
-    // Заморозка при финальных статусах
-    if (['БАН', 'На смену', 'Отмена запуска'].includes(body.status)) {
-      body.is_frozen = true
-      if (!body.ban_date) body.ban_date = today
+    // Терминальные статусы: автодата бана
+    if (['БАН', 'На смену', 'Отмена запуска'].includes(body.status) && !body.ban_date) {
+      body.ban_date = today
     }
 
     // Убираем пустые строки чтобы не было ошибок

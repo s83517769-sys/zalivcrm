@@ -1322,7 +1322,7 @@ async function commitEdit() {
         : (marks.stripe ? `inset 3px 0 0 ${marks.stripe}` : undefined),
     }
     return (
-      <tr key={a.id} id={'row-'+a.id} className={`${a.is_frozen?'frozen-row':''}${activeId===a.id?' active-row':''}`} style={trStyle}
+      <tr key={a.id} id={'row-'+a.id} className={activeId===a.id?'active-row':''} style={trStyle}
           onClick={()=>{ if(rowDrag||editCell) return; setActiveId(a.id); clearTimeout(openTimer.current); openTimer.current=setTimeout(()=>openDrawer(a),180) }}
           onDragOver={rowDrag ? (e=>{e.preventDefault();const r=e.currentTarget.getBoundingClientRect();const side=(e.clientY-r.top)<r.height/2?'top':'bottom';if(!rowOver||rowOver.id!==a.id||rowOver.side!==side)setRowOver({id:a.id,side})}) : undefined}
           onDrop={rowDrag ? (e=>{e.preventDefault();dropRow(a.id)}) : undefined}>
@@ -1495,7 +1495,6 @@ async function commitEdit() {
         .camp-st{font-size:11px;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis}
         .camp-cost{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--t2);min-width:54px;text-align:right}
         .cell-sm.muted{color:var(--t3)}
-        .frozen-row td{opacity:.6}
         tbody tr.active-row td{background:rgba(91,110,245,.12)}
         .app.compact td{padding:2px 8px}
         .app.compact thead th{padding:4px 8px}
