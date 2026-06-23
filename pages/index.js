@@ -132,6 +132,10 @@ const TECH_STATUS_MAP = {
   // скрипт уже шлёт данные, но кликов/спенда никогда не было. Нейтральный
   // жёлтый — «в процессе», отличается от тревожного оранжевого Бюджет/Пауза.
   'Модерация':      { l:'Модерация',      c:'#c9c020' },
+  // «Новые» — псевдогруппа сайдбара для аккаунтов без скрипта (last_seen_at
+  // пуст). На карточки дашборда НЕ попадает (там только реальные тех-статусы),
+  // живёт исключительно в боковом списке как рабочая навигация.
+  'Новые':          { l:'Новые',          c:'#6b7280' },
 }
 function techStatusInfo(s) { return s ? (TECH_STATUS_MAP[s] || null) : null }
 // Каноническое имя тех-статуса для фильтрации/группировки/счётчиков. Любые разные
@@ -1151,7 +1155,13 @@ async function commitEdit() {
     if (filterMode === 'status') {
       if (statusSel.length && !statusSel.includes(a.status)) return false
     } else if (filterMode === 'tech') {
-      if (techStatusSel.length && !techStatusSel.includes(effectiveTechStatus(a, watchdogHours, moderationHours))) return false
+      if (techStatusSel.length) {
+        // Пустой eff (скрипт не присылал) попадает в псевдогруппу «Новые»
+        // именно для целей фильтрации сайдбара. Если пользователь выбрал
+        // конкретный тех-статус (Крутит/Бан/…), такие аккаунты исключаются.
+        const eff = effectiveTechStatus(a, watchdogHours, moderationHours) || 'Новые'
+        if (!techStatusSel.includes(eff)) return false
+      }
     }
     return true
   })
@@ -1297,23 +1307,37 @@ async function commitEdit() {
   STATUSES.forEach(st => { statusGroups[st] = cohort.filter(a => a.status === st).length })
   // Список канонических тех-статусов с реальной встречаемостью.
   // Любые написания (Пауза / ПАУЗЕ / ВСЕ НА ПАУЗЕ / Пауза/Оплата) схлопываются в одно.
+  // Пустой eff (last_seen_at пуст) считаем отдельно — попадёт только в сайдбар.
   const techStatusGroups = {}
+  let noScriptCount = 0
   for (const a of cohort) {
     const canon = effectiveTechStatus(a, watchdogHours, moderationHours)
-    if (!canon) continue
+    if (!canon) { noScriptCount++; continue }
     techStatusGroups[canon] = (techStatusGroups[canon] || 0) + 1
   }
   // Сортируем тех-статусы по приоритету проблемности; неизвестные — в конец.
   // «Модерация» (вычисляемая) — в самом начале (нейтральный/процесс), «Бан»
-  // (вычисляемый) — в самом конце как самый терминальный.
+  // (вычисляемый) — в самом конце как самый терминальный. Этот список —
+  // источник правды для КАРТОЧЕК ДАШБОРДА (только реальные тех-состояния).
   const TECH_STATUS_ORDER = ['Модерация','Крутит','Отклонены','Бюджет','Пауза/Оплата','ПРОВЕРЬ','НЕТ СВЯЗИ','Бан']
-  const techStatusList = Object.keys(techStatusGroups).sort((a, b) => {
-    const ia = TECH_STATUS_ORDER.indexOf(a), ib = TECH_STATUS_ORDER.indexOf(b)
-    if (ia === -1 && ib === -1) return a.localeCompare(b)
-    if (ia === -1) return 1
-    if (ib === -1) return -1
-    return ia - ib
-  })
+  function sortByOrder(order) {
+    return (a, b) => {
+      const ia = order.indexOf(a), ib = order.indexOf(b)
+      if (ia === -1 && ib === -1) return a.localeCompare(b)
+      if (ia === -1) return 1
+      if (ib === -1) return -1
+      return ia - ib
+    }
+  }
+  const techStatusList = Object.keys(techStatusGroups).sort(sortByOrder(TECH_STATUS_ORDER))
+
+  // Сайдбар-вариант: добавляем псевдогруппу «Новые» (аккаунты без скрипта)
+  // в начало, если такие реально есть. В карточки дашборда не идёт.
+  const sidebarTechGroups = noScriptCount > 0
+    ? { 'Новые': noScriptCount, ...techStatusGroups }
+    : techStatusGroups
+  const SIDEBAR_TECH_ORDER = ['Новые', ...TECH_STATUS_ORDER]
+  const sidebarTechList = Object.keys(sidebarTechGroups).sort(sortByOrder(SIDEBAR_TECH_ORDER))
 
   const totalAccounts = accounts.length
   const working = accounts.filter(a => a.status && a.status.toLowerCase().includes('крутит')).length
@@ -1771,16 +1795,16 @@ async function commitEdit() {
                   <div className={`sbi${techStatusSel.length===0?' act':''}`} onClick={()=>setTechStatusSel([])}>
                     <span className="sb-dot" style={{background:'var(--t3)'}}/>Все<span className="sb-cnt">{cohort.length}</span>
                   </div>
-                  {techStatusList.map(ts=>{
+                  {sidebarTechList.map(ts=>{
                     const info = techStatusInfo(ts) // info.l === ts здесь, поэтому ключ-в-карте есть
                     return (
                       <div key={ts} className={`sbi${techStatusSel.includes(ts)?' act':''}`} onClick={()=>selectOne(ts,techStatusSel,setTechStatusSel)}>
                         <span className="sb-dot" style={{background:info?.c||'#6b7280'}}/>
-                        {ts}<span className="sb-cnt">{techStatusGroups[ts]}</span>
+                        {ts}<span className="sb-cnt">{sidebarTechGroups[ts]}</span>
                       </div>
                     )
                   })}
-                  {techStatusList.length === 0 && (
+                  {sidebarTechList.length === 0 && (
                     <div className="sbi" style={{color:'var(--t3)',fontSize:11,cursor:'default'}}>нет данных от скрипта</div>
                   )}
                 </>
@@ -1837,8 +1861,8 @@ async function commitEdit() {
                         <span key={st} className={`chip${statusSel.includes(st)?' act':''}`} onClick={()=>selectOne(st,statusSel,setStatusSel)}>{st}</span>
                       ))
                     ) : (
-                      techStatusList.length > 0
-                        ? techStatusList.map(ts=>(
+                      sidebarTechList.length > 0
+                        ? sidebarTechList.map(ts=>(
                             <span key={ts} className={`chip${techStatusSel.includes(ts)?' act':''}`} onClick={()=>selectOne(ts,techStatusSel,setTechStatusSel)}>{ts}</span>
                           ))
                         : <span className="chip" style={{cursor:'default',color:'var(--t3)'}}>нет данных</span>
