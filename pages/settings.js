@@ -25,6 +25,7 @@ export default function Settings() {
   const [customStatuses, setCustomStatuses] = useState([])
   const [customGroups, setCustomGroups] = useState([])
   const [watchdogHours, setWatchdogHours] = useState(2)
+  const [moderationHours, setModerationHours] = useState(12)
   const [userTz, setUserTz] = useState('Asia/Nicosia')
   const [tzSaving, setTzSaving] = useState(false)
   const [spendByUserTz, setSpendByUserTz] = useState(false)
@@ -55,6 +56,7 @@ export default function Settings() {
       setCustomStatuses(s.settings.custom_statuses || [])
       setCustomGroups(s.settings.custom_groups || [])
       setWatchdogHours(s.settings.watchdog_hours ?? 2)
+      setModerationHours(s.settings.moderation_hours ?? 12)
       setRowRules(s.settings.row_rules || [])
       setRates({ USD:1, ...(s.settings.currency_rates || {}) })
       if (s.settings.user_timezone) setUserTz(s.settings.user_timezone)
@@ -213,6 +215,12 @@ export default function Settings() {
     const h = Math.max(1, parseInt(watchdogHours) || 2)
     setWatchdogHours(h)
     if (await saveSettings({ watchdog_hours: h })) showToast('Watchdog сохранён ✓')
+  }
+
+  async function saveModeration() {
+    const h = Math.max(1, parseInt(moderationHours) || 12)
+    setModerationHours(h)
+    if (await saveSettings({ moderation_hours: h })) showToast('Окно модерации сохранено ✓')
   }
 
   return (
@@ -504,6 +512,14 @@ export default function Settings() {
             <button className="btn btn-acc" onClick={saveWatchdog}>Сохранить</button>
           </div>
           <div className="hint">Через сколько часов молчания время последнего обновления в колонке «Активность» подсвечивается оранжевым (нет связи). По умолчанию 2 часа.</div>
+          <div className="row" style={{marginTop:12}}>
+            <div className="fi" style={{maxWidth:160,marginBottom:0}}>
+              <label>Окно модерации, часов</label>
+              <input type="number" min={1} value={moderationHours} onChange={e=>setModerationHours(e.target.value)}/>
+            </div>
+            <button className="btn btn-acc" onClick={saveModeration}>Сохранить</button>
+          </div>
+          <div className="hint">Сколько часов новый аккаунт без активности считается на модерации. После этого окна — если ни одного клика/спенда так и не было — статус возвращается к тому, что шлёт скрипт (обычно «Пауза/Оплата»). По умолчанию 12 часов.</div>
         </div>
       </div>
 

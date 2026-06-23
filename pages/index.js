@@ -144,28 +144,39 @@ function canonTechStatus(s) {
 }
 
 // Эффективный технический статус. Скрипт мониторинга стоит на каждом аккаунте
-// и шлёт данные каждый час, поэтому решения принимаем по чёткому приоритету.
-// Первое подходящее правило побеждает:
+// и шлёт данные каждый час; на модерации он шлёт «Пауза» — ровно тот же
+// литерал, что и при настоящей паузе/оплате (отдельного статуса modeling
+// нет). Различить можно только по возрасту аккаунта. Решения принимаем по
+// чёткому приоритету — первое подходящее правило побеждает:
 //
-//   1. Бан        — молчит дольше watchdog_hours (last_seen_at протух). Любые
-//                   старые данные неактуальны — кабинет с тех пор замолчал.
+//   1. Бан        — молчит дольше watchdog_hours (last_seen_at протух).
+//                   Старые данные неактуальны — кабинет с тех пор замолчал.
 //   2. Отклонены  — явный сигнал от скрипта, перебивает Модерацию (кампанию
 //                   завернули, факт активности уже не важен).
 //   3. По факту   — если хоть раз была активность (клик ИЛИ спенд > 0), отдаём
-//                   то, что прислал скрипт: Крутит / Бюджет / Пауза-Оплата и т.п.
-//   4. Модерация  — скрипт уже шлёт нули, активности никогда не было: реклама
-//                   ещё на проверке у Google. Снимется автоматически по первому
-//                   ненулевому клику/спенду — раньше, чем скрипт сменит литерал.
+//                   то, что прислал скрипт: Крутит / Бюджет / Пауза-Оплата.
+//   4. Модерация  — аккаунт младше moderation_hours от created_at И активности
+//                   ни разу не было. Реклама ещё на проверке у Google. Снимется
+//                   автоматически при появлении спенда/клика (правило 3) либо
+//                   по истечении окна модерации (правило 5 — обычно «Пауза»).
+//   5. По факту   — окно модерации закончилось, активности так и не было:
+//                   отдаём reported (как правило «Пауза/Оплата»). Это и есть
+//                   фикс прежнего бага «аккаунт навсегда залип в Модерации».
 //
-// Признак «была ли активность когда-либо» вычисляется из локальных полей
-// аккаунта без новой колонки и без серверных запросов:
+// hadAnyActivity — из локальных полей аккаунта, без новой колонки и без
+// серверных запросов:
 //   - today_cost / today_clicks / yest_cost / yest_clicks — пишутся ингестом
 //     в строку аккаунта, остаются ненулевыми после первой реальной активности
 //   - crut_date — ставится ингестом при первом 'Крутит'/'РАБОТАЕТ' от скрипта,
 //     закрывает кейс «активность была давно, последние 2 дня нули»
 // Этого достаточно: новый аккаунт без активности → все четыре поля 0, crut_date
-// пустой → Модерация. Первый ингест со спендом или кликом → сразу выходит из
-// Модерации, до того как скрипт успеет сменить tech_status.
+// пустой → Модерация. Первый ингест со спендом/кликом → выход из Модерации
+// на следующем рендере, до того как скрипт успеет сменить tech_status.
+//
+// isModerationWindow — возраст аккаунта по `accounts.created_at` (см.
+// `database_schema.sql:77` — TIMESTAMPTZ DEFAULT NOW(), ставится для каждой
+// строки на инсерте; защитный фолбэк: если created_at пуст — окно НЕ
+// маркируется, в Модерации не залипнем).
 //
 // Аккаунты без last_seen_at (никогда не были видны скриптом) НЕ маркируем
 // баном — это новые/ручные строки. На них правило 1 не срабатывает.
@@ -175,7 +186,12 @@ function hadAnyActivity(a) {
   return (+a.today_cost  > 0) || (+a.yest_cost  > 0)
       || (+a.today_clicks > 0) || (+a.yest_clicks > 0)
 }
-function effectiveTechStatus(a, watchdogHours) {
+function isModerationWindow(a, moderationHours) {
+  if (!a?.created_at) return false
+  const age = Date.now() - new Date(a.created_at).getTime()
+  return age < moderationHours * 3600 * 1000
+}
+function effectiveTechStatus(a, watchdogHours, moderationHours) {
   if (!a) return ''
   // 1. Бан по молчанию — самый высокий приоритет
   if (a.last_seen_at) {
@@ -187,8 +203,10 @@ function effectiveTechStatus(a, watchdogHours) {
   if (reported === 'Отклонены') return 'Отклонены'
   // 3. Была активность — доверяем тому, что прислал скрипт
   if (hadAnyActivity(a)) return reported
-  // 4. Нет активности и нет другого однозначного сигнала — Модерация
-  return 'Модерация'
+  // 4. Свежий аккаунт без активности — Модерация (окно от created_at)
+  if (isModerationWindow(a, moderationHours)) return 'Модерация'
+  // 5. Окно модерации закончилось, активности так и не было — reported (Пауза/Оплата)
+  return reported
 }
 
 function metricsOf(a, summary) {
@@ -266,6 +284,7 @@ export default function Home() {
   const [rowRules, setRowRules] = useState(DEFAULT_ROW_RULES)
   const [userTz, setUserTz] = useState(null) // часовой пояс пользователя (из настроек)
   const [watchdogHours, setWatchdogHours] = useState(2) // порог оранжевой подсветки в колонке «Активность»
+  const [moderationHours, setModerationHours] = useState(12) // окно «свежий аккаунт без активности → Модерация»
 
   // ── Сводная панель ──
   const [catFilter, setCatFilter] = useState(null) // 'active'|'problem'|'terminal'|'no_signal'|null
@@ -548,6 +567,8 @@ export default function Home() {
     if (sData?.settings?.user_timezone) setUserTz(sData.settings.user_timezone)
     const wh = +sData?.settings?.watchdog_hours
     if (Number.isFinite(wh) && wh > 0) setWatchdogHours(wh)
+    const mh = +sData?.settings?.moderation_hours
+    if (Number.isFinite(mh) && mh > 0) setModerationHours(mh)
     // column_config из БД важнее localStorage (переживает смену устройства)
     const cc = sData?.settings?.column_config
     if (cc && Object.keys(cc).length) {
@@ -1127,7 +1148,7 @@ async function commitEdit() {
     if (filterMode === 'status') {
       if (statusSel.length && !statusSel.includes(a.status)) return false
     } else if (filterMode === 'tech') {
-      if (techStatusSel.length && !techStatusSel.includes(effectiveTechStatus(a, watchdogHours))) return false
+      if (techStatusSel.length && !techStatusSel.includes(effectiveTechStatus(a, watchdogHours, moderationHours))) return false
     }
     return true
   })
@@ -1176,7 +1197,7 @@ async function commitEdit() {
       else if (cat === 'problem') problem++
       else if (cat === 'terminal') terminal++
       if (a.tech_status === 'НЕТ СВЯЗИ') noSignal++
-      const canon = effectiveTechStatus(a, watchdogHours)
+      const canon = effectiveTechStatus(a, watchdogHours, moderationHours)
       if (canon) techCounts[canon] = (techCounts[canon] || 0) + 1
     }
     let spendToday = 0, spendYest = 0
@@ -1275,7 +1296,7 @@ async function commitEdit() {
   // Любые написания (Пауза / ПАУЗЕ / ВСЕ НА ПАУЗЕ / Пауза/Оплата) схлопываются в одно.
   const techStatusGroups = {}
   for (const a of cohort) {
-    const canon = effectiveTechStatus(a, watchdogHours)
+    const canon = effectiveTechStatus(a, watchdogHours, moderationHours)
     if (!canon) continue
     techStatusGroups[canon] = (techStatusGroups[canon] || 0) + 1
   }
@@ -1328,7 +1349,7 @@ async function commitEdit() {
         // «Модерация» / «Бан» вычисляются (см. effectiveTechStatus) и перебивают
         // то, что прислал скрипт. tech_note в этих случаях скрываем — он из
         // старого/нерелевантного ингеста и сбивал бы с толку.
-        const eff = effectiveTechStatus(a, watchdogHours)
+        const eff = effectiveTechStatus(a, watchdogHours, moderationHours)
         const isComputedBan = eff === 'Бан' && a.tech_status !== 'Бан'
         const isComputedMod = eff === 'Модерация' && a.tech_status !== 'Модерация'
         const isComputed = isComputedBan || isComputedMod
