@@ -131,6 +131,95 @@ function StatusLineChart({ byDay, statuses, colorOf, today, year, month }) {
   )
 }
 
+// Линейный график метрик. Метрики разного порядка (Cost ~$1400, Конверсии ~25,
+// CPA ~$2): на одной общей оси Y маленькие линии сплющивались бы в ноль. Здесь
+// каждая линия НОРМАЛИЗОВАНА в свой [0, max этой метрики]: занимает всю высоту,
+// форма (где пик, где провал) сравнима между метриками, абсолютные значения —
+// в тултипе на точках и в легенде «текущее / max». Y-оси с числами нет —
+// она была бы валидной только для одной метрики из набора.
+//
+// Defs приходят как массив определений; enabled — Set ключей включённых.
+// dataOf(key, day) возвращает число (0 если нет данных).
+function MetricsLineChart({ defs, enabled, dataOf, days, today }) {
+  // Только дни 1..today (будущие не рисуем, как в графике статусов).
+  const visibleDays = days.filter(d => d <= today)
+  const active = defs.filter(d => enabled.has(d.key))
+
+  if (visibleDays.length === 0 || active.length === 0) {
+    return (
+      <div style={{marginTop:12,padding:'20px 16px',textAlign:'center',color:'var(--t3)',fontSize:12,background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:6}}>
+        {active.length === 0 ? 'Выбери хотя бы одну метрику над графиком' : 'Дней с данными пока нет'}
+      </div>
+    )
+  }
+
+  const W = 900, H = 240
+  const padL = 16, padR = 16, padT = 14, padB = 26
+  const plotW = W - padL - padR
+  const plotH = H - padT - padB
+
+  const xOf = i => visibleDays.length === 1
+    ? padL + plotW / 2
+    : padL + (i / (visibleDays.length - 1)) * plotW
+
+  // Per-metric: max и сериализованные точки в нормализованных координатах.
+  // current — значение за сегодня (последний видимый день) для подписи в легенде.
+  const series = active.map(def => {
+    const vals = visibleDays.map(d => +dataOf(def.key, d) || 0)
+    const max = Math.max(0, ...vals)
+    const yOf = v => padT + plotH - (max > 0 ? (v / max) * plotH : 0)
+    const pts = vals.map((v, i) => `${xOf(i)},${yOf(v)}`).join(' ')
+    const dots = vals.map((v, i) => ({ x: xOf(i), y: yOf(v), v, d: visibleDays[i] }))
+    return { def, vals, max, pts, dots, current: vals[vals.length - 1] }
+  })
+
+  const xLabelStep = Math.max(1, Math.ceil(visibleDays.length / 12))
+
+  return (
+    <div style={{marginTop:12}}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:H,background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:6}}>
+        {/* Лёгкая горизонталь — base line (без чисел: ось значит «0..max» per-line) */}
+        <line x1={padL} y1={padT + plotH} x2={W - padR} y2={padT + plotH} stroke="var(--bd)" strokeWidth="0.5"/>
+        <line x1={padL} y1={padT} x2={W - padR} y2={padT} stroke="var(--bd)" strokeWidth="0.5" strokeDasharray="2 3"/>
+        {/* X-подписи (дни) */}
+        {visibleDays.map((d, i) => {
+          if (i % xLabelStep !== 0 && i !== visibleDays.length - 1) return null
+          return (
+            <text key={d} x={xOf(i)} y={H-padB+14} fontSize="9" textAnchor="middle" fill="var(--t3)" fontFamily="JetBrains Mono,monospace">
+              {d}
+            </text>
+          )
+        })}
+        {/* Линии */}
+        {series.map(({ def, pts }) => (
+          <polyline key={`l-${def.key}`} points={pts} fill="none" stroke={def.color} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round"/>
+        ))}
+        {/* Точки с тултипом — показывают реальное значение */}
+        {series.map(({ def, dots }) => dots.map((p, i) => (
+          <circle key={`p-${def.key}-${i}`} cx={p.x} cy={p.y} r="2.5" fill={def.color}>
+            <title>{`${def.label} · ${p.d}: ${def.fmt(p.v)}`}</title>
+          </circle>
+        )))}
+      </svg>
+      {/* Легенда: цвет, имя, current/max — компактно справа */}
+      <div style={{display:'flex',flexWrap:'wrap',gap:'6px 16px',marginTop:8,padding:'0 4px'}}>
+        {series.map(({ def, current, max }) => (
+          <span key={def.key} style={{display:'inline-flex',alignItems:'center',gap:6,fontSize:11,color:'var(--t2)'}}>
+            <span style={{width:14,height:2,background:def.color,borderRadius:1,flexShrink:0}}/>
+            {def.label}
+            <span style={{fontFamily:'JetBrains Mono,monospace',color:'var(--t3)'}}>
+              {def.fmt(current)} <span style={{opacity:.6}}>/ max {def.fmt(max)}</span>
+            </span>
+          </span>
+        ))}
+      </div>
+      <div style={{fontSize:10,color:'var(--t3)',marginTop:6,padding:'0 4px'}}>
+        Каждая линия нормализована в свой 0..max, чтобы метрики разного порядка были читаемы. Реальные значения — в тултипе и легенде.
+      </div>
+    </div>
+  )
+}
+
 const STATUSES = [
   { key: 'Пуск',          color: '#4ea8de', bg: 'rgba(78,168,222,.12)' },
   { key: 'Модерация',     color: '#f5a623', bg: 'rgba(245,166,35,.12)' },
@@ -164,6 +253,11 @@ export default function Stats() {
   // Внутри режима «По статусам»: показывать строки по ручным или по техническим.
   // Дефолт — технические (вылизанные, отражают реальность от скрипта).
   const [statusKind, setStatusKind] = useState('tech') // 'tech' | 'manual'
+  // Какие метрики на графике в режиме «По метрикам». Дефолт — только Cost.
+  const [enabledMetrics, setEnabledMetrics] = useState(() => new Set(['cost']))
+  const toggleMetric = (k) => setEnabledMetrics(s => {
+    const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n
+  })
   const [techStats, setTechStats] = useState(null) // { by_day:{}, first_snapshot:null }
   const [manualStats, setManualStats] = useState(null) // зеркало для ручных снимков
   const [customStatuses, setCustomStatuses] = useState([]) // палитра ручных статусов из настроек
@@ -583,7 +677,23 @@ export default function Stats() {
             </>
           )}
 
-          {view === 'cost' && (
+          {view === 'cost' && (<>
+            {/* Над таблицей — переключатель метрик для графика. Пользователь
+                выбирает один-несколько чек-боксов, график обновляется в реалтайме. */}
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8,flexWrap:'wrap'}}>
+              <span style={{fontSize:11,color:'var(--t3)'}}>Метрики на графике:</span>
+              {[
+                {key:'cost',   label:'💰 Cost'},
+                {key:'clicks', label:'👆 Клики'},
+                {key:'conv',   label:'🎯 Конверсии'},
+                {key:'cpa',    label:'📊 CPA'},
+                {key:'cpc',    label:'⚡ CPC'},
+              ].map(m => (
+                <button key={m.key} className={`btn${enabledMetrics.has(m.key)?' act':''}`} onClick={()=>toggleMetric(m.key)}>
+                  {m.label}
+                </button>
+              ))}
+            </div>
             <table>
               <thead>
                 <tr>
@@ -649,7 +759,33 @@ export default function Stats() {
                 </tr>
               </tbody>
             </table>
-          )}
+            {/* График метрик под таблицей. Источник — те же getCostForDay/
+                getClicksForDay/getConvForDay, что у таблицы. CPA и CPC
+                вычисляем на лету из суммарных Cost / Conv / Clicks за день. */}
+            <MetricsLineChart
+              days={days}
+              today={today}
+              enabled={enabledMetrics}
+              defs={[
+                {key:'cost',   label:'Cost $',    color:'#22d17a', fmt:v => v>0?'$'+v.toFixed(0):'$0'},
+                {key:'clicks', label:'Клики',     color:'#5b6ef5', fmt:v => v>0?v.toString():'0'},
+                {key:'conv',   label:'Конверсии', color:'#f5a623', fmt:v => v>0?v.toString():'0'},
+                {key:'cpa',    label:'CPA $',     color:'#f05555', fmt:v => v>0?'$'+v.toFixed(2):'—'},
+                {key:'cpc',    label:'CPC $',     color:'#c084fc', fmt:v => v>0?'$'+v.toFixed(2):'—'},
+              ]}
+              dataOf={(k, d) => {
+                const cost = getCostForDay(d)
+                const clicks = getClicksForDay(d)
+                const conv = getConvForDay(d)
+                if (k === 'cost') return cost
+                if (k === 'clicks') return clicks
+                if (k === 'conv') return conv
+                if (k === 'cpa') return conv > 0 ? cost / conv : 0
+                if (k === 'cpc') return clicks > 0 ? cost / clicks : 0
+                return 0
+              }}
+            />
+          </>)}
 
           {view === 'zalivshik' && (
             <table>
