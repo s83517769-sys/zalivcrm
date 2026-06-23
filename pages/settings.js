@@ -498,12 +498,12 @@ export default function Settings() {
           <h2>🐶 Watchdog</h2>
           <div className="row">
             <div className="fi" style={{maxWidth:160,marginBottom:0}}>
-              <label>Часов без данных → «НЕТ СВЯЗИ»</label>
+              <label>Часов молчания → оранжевая «Активность»</label>
               <input type="number" min={1} value={watchdogHours} onChange={e=>setWatchdogHours(e.target.value)}/>
             </div>
             <button className="btn btn-acc" onClick={saveWatchdog}>Сохранить</button>
           </div>
-          <div className="hint">По умолчанию 2 часа. Применяется при проверках watchdog-скриптом.</div>
+          <div className="hint">Через сколько часов молчания время последнего обновления в колонке «Активность» подсвечивается оранжевым (нет связи). По умолчанию 2 часа.</div>
         </div>
       </div>
 
