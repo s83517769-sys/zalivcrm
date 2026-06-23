@@ -5,10 +5,13 @@ import { api } from '../lib/api'
 import { useAuth } from '../lib/useAuth'
 import { TECH_STATUS_MAP } from '../lib/techStatus'
 
-// Технические статусы для режима «По тех-статусам» — строки таблицы, в
-// каноническом порядке. Цвета берутся из TECH_STATUS_MAP — те же, что в
-// основной таблице аккаунтов, чтобы UI был согласованным.
-const TECH_STATUSES_FOR_STATS = ['Модерация','Крутит','Отклонены','Бюджет','Пауза/Оплата','ПРОВЕРЬ','НЕТ СВЯЗИ','Бан']
+// Технические статусы для режима «По тех-статусам» — дефолтный набор строк
+// в каноническом порядке. Финальный список строится динамически из реальных
+// снимков + этого набора (см. activeTechStatuses), пустые строки скрываются.
+// «ПРОВЕРЬ» и «НЕТ СВЯЗИ» — legacy из MCC-скрипта, в новой логике заменены
+// на Бан/Модерация/Новые, поэтому в дефолтный набор не входят. Если такие
+// статусы окажутся в старых снимках — отрисуются как «прочие» в конце.
+const TECH_STATUSES_FOR_STATS = ['Модерация','Крутит','Отклонены','Бюджет','Пауза/Оплата','Бан']
 
 // Шапка ячейки-дня. Один компонент на все 4 таблицы — гарантирует, что
 // число и подпись «сег.» всегда выложены одинаково и не ломают высоту строки.
@@ -60,6 +63,8 @@ export default function Stats() {
   // Дефолт — технические (вылизанные, отражают реальность от скрипта).
   const [statusKind, setStatusKind] = useState('tech') // 'tech' | 'manual'
   const [techStats, setTechStats] = useState(null) // { by_day:{}, first_snapshot:null }
+  const [manualStats, setManualStats] = useState(null) // зеркало для ручных снимков
+  const [customStatuses, setCustomStatuses] = useState([]) // палитра ручных статусов из настроек
 
   const now = new Date()
   const year = now.getFullYear()
@@ -78,6 +83,17 @@ export default function Stats() {
     api(`/api/stats/tech-status?year=${year}&month=${month + 1}`)
       .then(r => setTechStats(r))
       .catch(() => setTechStats({ by_day: {}, first_snapshot: null }))
+    api(`/api/stats/manual-status?year=${year}&month=${month + 1}`)
+      .then(r => setManualStats(r))
+      .catch(() => setManualStats({ by_day: {}, first_snapshot: null }))
+    // Палитра ручных статусов — из настроек юзера. Нужна для цвета строки в
+    // режиме «Ручные»: пользователь может завести свой custom_statuses,
+    // встроенный STATUSES — fallback для базовых имён.
+    api('/api/users/settings')
+      .then(r => {
+        if (Array.isArray(r?.settings?.custom_statuses)) setCustomStatuses(r.settings.custom_statuses)
+      })
+      .catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -161,10 +177,65 @@ export default function Stats() {
   const totalConv = days.reduce((s, d) => s + getConvForDay(d), 0)
   const avgCpa = totalConv > 0 ? totalCost / totalConv : 0
 
-  // Активные статусы (у которых есть аккаунты)
-  const activeStatuses = STATUSES.filter(s =>
-    accounts.some(a => a.status === s.key)
-  )
+  // Активные статусы для режима «Ручные» — динамически из РЕАЛЬНЫХ снимков и
+  // текущих аккаунтов, плюс палитра custom_statuses + дефолтный STATUSES.
+  // Пустые (нигде не встретились) — не показываем.
+  function colorOfManualStatus(name) {
+    const c = customStatuses.find(s => s.name === name)
+    if (c?.color) return { color: c.color, bg: c.bg || `${c.color}1f` }
+    const s = STATUSES.find(s => s.key === name)
+    if (s) return { color: s.color, bg: s.bg }
+    return { color: '#6b7280', bg: 'rgba(107,114,128,.12)' }
+  }
+  const activeManualStatuses = (() => {
+    const names = new Set()
+    for (const a of accounts) { if (a.status) names.add(a.status) }
+    if (manualStats?.by_day) {
+      for (const d of Object.values(manualStats.by_day)) {
+        for (const n of Object.keys(d)) names.add(n)
+      }
+    }
+    // Сортировка: сначала имена из custom_statuses в их порядке, потом из дефолтного STATUSES,
+    // потом всё остальное по алфавиту. Скрытые (нет ни в снимках, ни в текущих) сюда не попадают.
+    const order = [
+      ...customStatuses.map(s => s.name),
+      ...STATUSES.map(s => s.key).filter(k => !customStatuses.some(c => c.name === k)),
+    ]
+    return [...names].sort((a, b) => {
+      const ia = order.indexOf(a), ib = order.indexOf(b)
+      if (ia === -1 && ib === -1) return a.localeCompare(b)
+      if (ia === -1) return 1
+      if (ib === -1) return -1
+      return ia - ib
+    })
+  })()
+
+  // Активные тех-статусы для режима «Технические» — динамически из снимков.
+  // Legacy «ПРОВЕРЬ» / «НЕТ СВЯЗИ» в TECH_STATUSES_FOR_STATS уже не входят;
+  // если они вдруг прилетят из старых снимков — попадут как «прочие» в конец,
+  // что приемлемо (постепенно вытесняются).
+  const activeTechStatuses = (() => {
+    const names = new Set(TECH_STATUSES_FOR_STATS)
+    if (techStats?.by_day) {
+      for (const d of Object.values(techStats.by_day)) {
+        for (const n of Object.keys(d)) names.add(n)
+      }
+    }
+    const sorted = [...names].sort((a, b) => {
+      const ia = TECH_STATUSES_FOR_STATS.indexOf(a)
+      const ib = TECH_STATUSES_FOR_STATS.indexOf(b)
+      if (ia === -1 && ib === -1) return a.localeCompare(b)
+      if (ia === -1) return 1
+      if (ib === -1) return -1
+      return ia - ib
+    })
+    // Скрываем строки, где total за месяц = 0 (Сейчас тоже учитываем).
+    return sorted.filter(ts => {
+      let total = 0
+      if (techStats?.by_day) for (const d of Object.values(techStats.by_day)) total += d[ts] || 0
+      return total > 0
+    })
+  })()
 
   return (
     <>
@@ -277,13 +348,17 @@ export default function Stats() {
                 <span style={{fontSize:11,color:'var(--t3)'}}>Источник статуса:</span>
                 <button className={`btn${statusKind==='manual'?' act':''}`} onClick={()=>setStatusKind('manual')}>Ручные</button>
                 <button className={`btn${statusKind==='tech'?' act':''}`} onClick={()=>setStatusKind('tech')}>Технические</button>
-                {statusKind==='tech' && (
-                  <span style={{fontSize:11,color:'var(--t3)',marginLeft:'auto'}}>
-                    {techStats?.first_snapshot
+                <span style={{fontSize:11,color:'var(--t3)',marginLeft:'auto'}}>
+                  {statusKind === 'tech' ? (
+                    techStats?.first_snapshot
                       ? `история ведётся с ${new Date(techStats.first_snapshot).toLocaleDateString('ru')} — ранее данных нет`
-                      : 'история накапливается с первого ингеста после запуска фичи'}
-                  </span>
-                )}
+                      : 'история накапливается с первого ингеста после запуска фичи'
+                  ) : (
+                    manualStats?.first_snapshot
+                      ? `история ведётся с ${new Date(manualStats.first_snapshot).toLocaleDateString('ru')} — ранее данных нет`
+                      : 'история накапливается с первого ингеста / ручной смены после запуска фичи'
+                  )}
+                </span>
               </div>
               {statusKind === 'manual' ? (
                 <table>
@@ -305,30 +380,34 @@ export default function Stats() {
                       <td>{accounts.length}</td>
                     </tr>
 
-                    {activeStatuses.map(s => (
-                      <tr key={s.key}>
-                        <td>
-                          <span className="status-label">
-                            <span className="status-dot" style={{background:s.color}}/>
-                            {s.key}
-                          </span>
-                        </td>
-                        {days.map(d => {
-                          const cnt = getStatusCountForDay(d, s.key)
-                          return (
-                            <td key={d} className={d===today?'today-col':''}>
-                              {cnt > 0
-                                ? <span className="cell-val" style={{background:s.bg,color:s.color}}>{cnt}</span>
-                                : <span className="cell-zero">—</span>
-                              }
-                            </td>
-                          )
-                        })}
-                        <td style={{color:s.color,fontWeight:500}}>
-                          {accounts.filter(a=>a.status===s.key).length || '—'}
-                        </td>
-                      </tr>
-                    ))}
+                    {activeManualStatuses.map(name => {
+                      const {color, bg} = colorOfManualStatus(name)
+                      const todayStr = `${year}-${String(month+1).padStart(2,'0')}-${String(today).padStart(2,'0')}`
+                      const nowCnt = manualStats?.by_day?.[todayStr]?.[name] || accounts.filter(a=>a.status===name).length
+                      return (
+                        <tr key={name}>
+                          <td>
+                            <span className="status-label">
+                              <span className="status-dot" style={{background:color}}/>
+                              {name}
+                            </span>
+                          </td>
+                          {days.map(d => {
+                            const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`
+                            const cnt = manualStats?.by_day?.[dateStr]?.[name] || 0
+                            return (
+                              <td key={d} className={d===today?'today-col':''}>
+                                {cnt > 0
+                                  ? <span className="cell-val" style={{background:bg,color}}>{cnt}</span>
+                                  : <span className="cell-zero">—</span>
+                                }
+                              </td>
+                            )
+                          })}
+                          <td style={{color,fontWeight:500}}>{nowCnt || '—'}</td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               ) : (
@@ -341,7 +420,7 @@ export default function Stats() {
                     </tr>
                   </thead>
                   <tbody>
-                    {TECH_STATUSES_FOR_STATS.map(ts => {
+                    {activeTechStatuses.map(ts => {
                       const info = TECH_STATUS_MAP[ts]
                       const color = info?.c || '#6b7280'
                       const bg = `${color}1f` // ~12% alpha hex

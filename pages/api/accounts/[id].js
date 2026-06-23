@@ -113,6 +113,24 @@ export default async function handler(req, res) {
       .eq('user_id', USER_ID)
 
     if (error) return res.status(500).json({ error: error.message })
+
+    // Дневной снимок ручного статуса при ручной смене — фиксируем сразу,
+    // чтобы изменение проявилось в /stats за сегодня без ожидания следующего
+    // ингеста. Изолирован от ответа PATCH — ошибка снимка не валит апдейт.
+    if ('status' in body && body.status && body.status !== current.status) {
+      try {
+        await supabaseAdmin
+          .from('daily_manual_status')
+          .upsert({
+            account_id: id,
+            user_id: USER_ID,
+            snapshot_date: today,
+            status: body.status,
+            updated_at: now.toISOString(),
+          }, { onConflict: 'account_id,snapshot_date' })
+      } catch {}
+    }
+
     return res.status(200).json({ ok: true })
   }
 
