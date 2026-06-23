@@ -125,6 +125,9 @@ const TECH_STATUS_MAP = {
   'ПРОВЕРЬ':        { l:'ПРОВЕРЬ',        c:'#f5a623' },
   'НЕТ СВЯЗИ':      { l:'НЕТ СВЯЗИ',      c:'#f05555' },
   'нет связи':      { l:'НЕТ СВЯЗИ',      c:'#f05555' },
+  // «Бан» — вычисляется на лету (см. effectiveTechStatus). В БД этот литерал
+  // никто не пишет; в мапе он живёт ради цвета/лейбла для UI.
+  'Бан':            { l:'Бан',            c:'#f05555' },
 }
 function techStatusInfo(s) { return s ? (TECH_STATUS_MAP[s] || null) : null }
 // Каноническое имя тех-статуса для фильтрации/группировки/счётчиков. Любые разные
@@ -134,6 +137,20 @@ function canonTechStatus(s) {
   if (!s) return ''
   const info = TECH_STATUS_MAP[s]
   return info ? info.l : s
+}
+
+// Технический статус «Бан» — производная: скрипт мониторинга стоит на каждом
+// аккаунте и шлёт данные каждый час, поэтому единственная причина молчания
+// дольше порога — забаненный кабинет. Перебивает то, что прислал скрипт
+// последним (старые данные не релевантны, если с тех пор аккаунт замолчал).
+// Аккаунты без last_seen_at (никогда не были видны скриптом) НЕ маркируем —
+// это новые/ручные строки, у которых нет повода считаться баном.
+function effectiveTechStatus(a, watchdogHours) {
+  if (a && a.last_seen_at) {
+    const diff = Date.now() - new Date(a.last_seen_at).getTime()
+    if (diff > watchdogHours * 3600 * 1000) return 'Бан'
+  }
+  return canonTechStatus(a?.tech_status)
 }
 
 function metricsOf(a, summary) {
@@ -1053,7 +1070,7 @@ async function commitEdit() {
     if (filterMode === 'status') {
       if (statusSel.length && !statusSel.includes(a.status)) return false
     } else if (filterMode === 'tech') {
-      if (techStatusSel.length && !techStatusSel.includes(canonTechStatus(a.tech_status))) return false
+      if (techStatusSel.length && !techStatusSel.includes(effectiveTechStatus(a, watchdogHours))) return false
     }
     if (geoSel.length && !geoSel.includes(a.geo)) return false
     if (zalivSel.length && !zalivSel.includes(a.zalivshik)) return false
@@ -1106,7 +1123,7 @@ async function commitEdit() {
       else if (cat === 'problem') problem++
       else if (cat === 'terminal') terminal++
       if (a.tech_status === 'НЕТ СВЯЗИ') noSignal++
-      const canon = canonTechStatus(a.tech_status)
+      const canon = effectiveTechStatus(a, watchdogHours)
       if (canon) techCounts[canon] = (techCounts[canon] || 0) + 1
       const m = metricsSummary[a.id]
       if (m) {
@@ -1199,12 +1216,13 @@ async function commitEdit() {
   // Любые написания (Пауза / ПАУЗЕ / ВСЕ НА ПАУЗЕ / Пауза/Оплата) схлопываются в одно.
   const techStatusGroups = {}
   for (const a of accounts) {
-    const canon = canonTechStatus(a.tech_status)
+    const canon = effectiveTechStatus(a, watchdogHours)
     if (!canon) continue
     techStatusGroups[canon] = (techStatusGroups[canon] || 0) + 1
   }
   // Сортируем тех-статусы по приоритету проблемности; неизвестные — в конец.
-  const TECH_STATUS_ORDER = ['Крутит','Отклонены','Бюджет','Пауза/Оплата','ПРОВЕРЬ','НЕТ СВЯЗИ']
+  // «Бан» (вычисляемый, см. effectiveTechStatus) — в конце, как самый терминальный.
+  const TECH_STATUS_ORDER = ['Крутит','Отклонены','Бюджет','Пауза/Оплата','ПРОВЕРЬ','НЕТ СВЯЗИ','Бан']
   const techStatusList = Object.keys(techStatusGroups).sort((a, b) => {
     const ia = TECH_STATUS_ORDER.indexOf(a), ib = TECH_STATUS_ORDER.indexOf(b)
     if (ia === -1 && ib === -1) return a.localeCompare(b)
@@ -1246,19 +1264,24 @@ async function commitEdit() {
       )
       case 'tech_status': {
         // Цвета и лейблы — из TECH_STATUS_MAP вверху файла (см. техStatusInfo).
-        // Крутит зелёный; Отклонены/Бюджет/Пауза-Оплата оранжевый; НЕТ СВЯЗИ красный.
-        const info = techStatusInfo(a.tech_status)
+        // Крутит зелёный; Отклонены/Бюджет/Пауза-Оплата оранжевый; НЕТ СВЯЗИ/Бан красный.
+        // «Бан» вычисляется по молчанию > watchdog_hours и перебивает то, что в БД.
+        const eff = effectiveTechStatus(a, watchdogHours)
+        const isComputedBan = eff === 'Бан' && a.tech_status !== 'Бан'
+        const info = techStatusInfo(eff) || techStatusInfo(a.tech_status)
         const frozen = FROZEN.includes(a.status)
         const hasMetrics = mt.today_cost>0 || mt.clicks>0
         const note = a.tech_note || ''
-        const isRatio = /^\d+\/\d+$/.test(note)         // "2/5" у Крутит
+        const isRatio = !isComputedBan && /^\d+\/\d+$/.test(note)         // "2/5" у Крутит
         const maybeBan = a.tech_status==='НЕТ СВЯЗИ' && (mt.today_cost>0 || mt.yest_cost>0)
+        const tooltip = isComputedBan
+          ? `Молчит > ${watchdogHours}ч — скрипт мониторинга перестал отвечать, считаем баном`
+          : (note && !isRatio ? note : undefined)
         return (
-          <span className="cell-sm" style={{color:info?info.c:'var(--t3)',fontFamily:'JetBrains Mono'}}
-                title={note && !isRatio ? note : undefined}>
+          <span className="cell-sm" style={{color:info?info.c:'var(--t3)',fontFamily:'JetBrains Mono'}} title={tooltip}>
             {info?info.l:(a.tech_status||'—')}
-            {note && isRatio && <span style={{opacity:.8}}> {note}</span>}
-            {note && !isRatio && <span style={{opacity:.8,fontSize:10}}> ({note.length>22?note.slice(0,22)+'…':note})</span>}
+            {!isComputedBan && note && isRatio && <span style={{opacity:.8}}> {note}</span>}
+            {!isComputedBan && note && !isRatio && <span style={{opacity:.8,fontSize:10}}> ({note.length>22?note.slice(0,22)+'…':note})</span>}
             {maybeBan && <span className="ban-chip" title="Тратил и замолчал — возможно бан, проверь аккаунт">возможно бан</span>}
             {frozen && hasMetrics && <span title="Метрики приходят на замороженный аккаунт"> ⚠️</span>}
           </span>
