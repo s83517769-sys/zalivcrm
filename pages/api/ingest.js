@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '../../lib/supabase'
 import { getUserIdByApiKey } from '../../lib/auth'
+import { effectiveTechStatus } from '../../lib/techStatus'
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
@@ -19,18 +20,24 @@ export default async function handler(req, res) {
   const today = new Date().toISOString().split('T')[0]
   const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0]
 
-  // Терминальные статусы (заморозка tech_status) — из настроек юзера, иначе дефолт
+  // Настройки юзера: терминальные ручные статусы (для заморозки tech_status в апдейте),
+  // плюс пороги watchdog_hours / moderation_hours — нужны для дневного снимка
+  // вычисленного тех-статуса в daily_tech_status. Один запрос на все три ключа.
   let terminalNames = ['БАН', 'На смену', 'Отмена запуска']
+  let watchdogHrs = 2
+  let moderationHrs = 12
   try {
     const { data: us } = await supabaseAdmin
       .from('user_settings')
-      .select('custom_statuses')
+      .select('custom_statuses, watchdog_hours, moderation_hours')
       .eq('user_id', USER_ID)
       .maybeSingle()
     if (Array.isArray(us?.custom_statuses)) {
       const t = us.custom_statuses.filter(s => s.category === 'terminal').map(s => s.name)
       if (t.length) terminalNames = t
     }
+    if (Number.isFinite(+us?.watchdog_hours) && +us.watchdog_hours > 0) watchdogHrs = +us.watchdog_hours
+    if (Number.isFinite(+us?.moderation_hours) && +us.moderation_hours > 0) moderationHrs = +us.moderation_hours
   } catch {}
 
   const results = []
@@ -142,6 +149,31 @@ export default async function handler(req, res) {
         .update(updates)
         .eq('id', account.id)
       if (updErr) errors.push({ name, stage: 'account_update', error: updErr.message })
+
+      // Дневной снимок вычисленного тех-статуса в daily_tech_status — источник
+      // правды для /stats режима «По тех-статусам». Считается через ту же
+      // effectiveTechStatus, что использует фронт (lib/techStatus.js), на
+      // апдейтенном состоянии аккаунта. Каждый часовой ингест перезаписывает
+      // строку за текущий день — к концу дня там финальное состояние.
+      // Изолирован от метрик: ошибка снимка НЕ ломает приём.
+      try {
+        const after = { ...account, ...updates }
+        const eff = effectiveTechStatus(after, watchdogHrs, moderationHrs)
+        if (eff) {
+          const { error: dtsErr } = await supabaseAdmin
+            .from('daily_tech_status')
+            .upsert({
+              account_id: account.id,
+              user_id: USER_ID,
+              snapshot_date: today,
+              tech_status: eff,
+              updated_at: new Date().toISOString(),
+            }, { onConflict: 'account_id,snapshot_date' })
+          if (dtsErr) errors.push({ name, stage: 'tech_status_snapshot', error: dtsErr.message })
+        }
+      } catch (e) {
+        errors.push({ name, stage: 'tech_status_snapshot', error: e.message })
+      }
 
       // Почасовой спенд → hourly_metrics (upsert по account+date+hour).
       // Пустой/отсутствующий массив НИЧЕГО не трогает — молчание не обнуляет историю.
