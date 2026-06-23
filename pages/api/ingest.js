@@ -175,6 +175,30 @@ export default async function handler(req, res) {
         errors.push({ name, stage: 'tech_status_snapshot', error: e.message })
       }
 
+      // Дневной снимок РУЧНОГО статуса в daily_manual_status — источник правды
+      // для /stats режима «По статусам — Ручные». Сюда же пишет PATCH
+      // /api/accounts/[id] при ручной смене статуса (чтобы зафиксировать
+      // изменение немедленно, не ждать следующего ингеста). Часовой ингест
+      // подтверждает «финальное состояние дня» на тот случай, если за день
+      // была серия правок и какая-то промежуточная упала.
+      // Изолирован от метрик и от тех-снимка — отдельный try/catch.
+      try {
+        if (account.status) {
+          const { error: dmsErr } = await supabaseAdmin
+            .from('daily_manual_status')
+            .upsert({
+              account_id: account.id,
+              user_id: USER_ID,
+              snapshot_date: today,
+              status: account.status,
+              updated_at: new Date().toISOString(),
+            }, { onConflict: 'account_id,snapshot_date' })
+          if (dmsErr) errors.push({ name, stage: 'manual_status_snapshot', error: dmsErr.message })
+        }
+      } catch (e) {
+        errors.push({ name, stage: 'manual_status_snapshot', error: e.message })
+      }
+
       // Почасовой спенд → hourly_metrics (upsert по account+date+hour).
       // Пустой/отсутствующий массив НИЧЕГО не трогает — молчание не обнуляет историю.
       if (Array.isArray(hourly) && hourly.length > 0) {
