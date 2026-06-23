@@ -6,11 +6,12 @@ import {
 } from '../../../lib/defaults'
 
 const DEFAULT_WATCHDOG_HOURS = 2
+const DEFAULT_MODERATION_HOURS = 12
 
 // Ключи, которые принимаем на запись
 const WRITABLE = [
-  'custom_statuses', 'custom_groups', 'watchdog_hours', 'column_config',
-  'row_rules', 'currency_rates', 'ui_density', 'ui_theme',
+  'custom_statuses', 'custom_groups', 'watchdog_hours', 'moderation_hours',
+  'column_config', 'row_rules', 'currency_rates', 'ui_density', 'ui_theme',
   'status_automations', 'default_sort', 'user_timezone', 'spend_by_user_tz',
 ]
 
@@ -39,6 +40,7 @@ export default async function handler(req, res) {
         custom_statuses: notEmpty(row?.custom_statuses) ? row.custom_statuses : DEFAULT_STATUSES,
         custom_groups: notEmpty(row?.custom_groups) ? row.custom_groups : DEFAULT_GROUPS,
         watchdog_hours: row?.watchdog_hours ?? DEFAULT_WATCHDOG_HOURS,
+        moderation_hours: row?.moderation_hours ?? DEFAULT_MODERATION_HOURS,
         column_config: row?.column_config || {},
         // сохранённые правила + новые дефолтные, которых у пользователя ещё нет (по id)
         row_rules: notEmpty(row?.row_rules)
