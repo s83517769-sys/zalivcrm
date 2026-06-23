@@ -128,6 +128,10 @@ const TECH_STATUS_MAP = {
   // «Бан» — вычисляется на лету (см. effectiveTechStatus). В БД этот литерал
   // никто не пишет; в мапе он живёт ради цвета/лейбла для UI.
   'Бан':            { l:'Бан',            c:'#f05555' },
+  // «Модерация» — тоже вычисляемая (см. effectiveTechStatus): аккаунт молодой,
+  // скрипт уже шлёт данные, но кликов/спенда никогда не было. Нейтральный
+  // жёлтый — «в процессе», отличается от тревожного оранжевого Бюджет/Пауза.
+  'Модерация':      { l:'Модерация',      c:'#c9c020' },
 }
 function techStatusInfo(s) { return s ? (TECH_STATUS_MAP[s] || null) : null }
 // Каноническое имя тех-статуса для фильтрации/группировки/счётчиков. Любые разные
@@ -139,18 +143,52 @@ function canonTechStatus(s) {
   return info ? info.l : s
 }
 
-// Технический статус «Бан» — производная: скрипт мониторинга стоит на каждом
-// аккаунте и шлёт данные каждый час, поэтому единственная причина молчания
-// дольше порога — забаненный кабинет. Перебивает то, что прислал скрипт
-// последним (старые данные не релевантны, если с тех пор аккаунт замолчал).
-// Аккаунты без last_seen_at (никогда не были видны скриптом) НЕ маркируем —
-// это новые/ручные строки, у которых нет повода считаться баном.
+// Эффективный технический статус. Скрипт мониторинга стоит на каждом аккаунте
+// и шлёт данные каждый час, поэтому решения принимаем по чёткому приоритету.
+// Первое подходящее правило побеждает:
+//
+//   1. Бан        — молчит дольше watchdog_hours (last_seen_at протух). Любые
+//                   старые данные неактуальны — кабинет с тех пор замолчал.
+//   2. Отклонены  — явный сигнал от скрипта, перебивает Модерацию (кампанию
+//                   завернули, факт активности уже не важен).
+//   3. По факту   — если хоть раз была активность (клик ИЛИ спенд > 0), отдаём
+//                   то, что прислал скрипт: Крутит / Бюджет / Пауза-Оплата и т.п.
+//   4. Модерация  — скрипт уже шлёт нули, активности никогда не было: реклама
+//                   ещё на проверке у Google. Снимется автоматически по первому
+//                   ненулевому клику/спенду — раньше, чем скрипт сменит литерал.
+//
+// Признак «была ли активность когда-либо» вычисляется из локальных полей
+// аккаунта без новой колонки и без серверных запросов:
+//   - today_cost / today_clicks / yest_cost / yest_clicks — пишутся ингестом
+//     в строку аккаунта, остаются ненулевыми после первой реальной активности
+//   - crut_date — ставится ингестом при первом 'Крутит'/'РАБОТАЕТ' от скрипта,
+//     закрывает кейс «активность была давно, последние 2 дня нули»
+// Этого достаточно: новый аккаунт без активности → все четыре поля 0, crut_date
+// пустой → Модерация. Первый ингест со спендом или кликом → сразу выходит из
+// Модерации, до того как скрипт успеет сменить tech_status.
+//
+// Аккаунты без last_seen_at (никогда не были видны скриптом) НЕ маркируем
+// баном — это новые/ручные строки. На них правило 1 не срабатывает.
+function hadAnyActivity(a) {
+  if (!a) return false
+  if (a.crut_date) return true
+  return (+a.today_cost  > 0) || (+a.yest_cost  > 0)
+      || (+a.today_clicks > 0) || (+a.yest_clicks > 0)
+}
 function effectiveTechStatus(a, watchdogHours) {
-  if (a && a.last_seen_at) {
+  if (!a) return ''
+  // 1. Бан по молчанию — самый высокий приоритет
+  if (a.last_seen_at) {
     const diff = Date.now() - new Date(a.last_seen_at).getTime()
     if (diff > watchdogHours * 3600 * 1000) return 'Бан'
   }
-  return canonTechStatus(a?.tech_status)
+  const reported = canonTechStatus(a.tech_status)
+  // 2. Отклонены — явный сигнал, перебивает Модерацию
+  if (reported === 'Отклонены') return 'Отклонены'
+  // 3. Была активность — доверяем тому, что прислал скрипт
+  if (hadAnyActivity(a)) return reported
+  // 4. Нет активности и нет другого однозначного сигнала — Модерация
+  return 'Модерация'
 }
 
 function metricsOf(a, summary) {
@@ -1242,8 +1280,9 @@ async function commitEdit() {
     techStatusGroups[canon] = (techStatusGroups[canon] || 0) + 1
   }
   // Сортируем тех-статусы по приоритету проблемности; неизвестные — в конец.
-  // «Бан» (вычисляемый, см. effectiveTechStatus) — в конце, как самый терминальный.
-  const TECH_STATUS_ORDER = ['Крутит','Отклонены','Бюджет','Пауза/Оплата','ПРОВЕРЬ','НЕТ СВЯЗИ','Бан']
+  // «Модерация» (вычисляемая) — в самом начале (нейтральный/процесс), «Бан»
+  // (вычисляемый) — в самом конце как самый терминальный.
+  const TECH_STATUS_ORDER = ['Модерация','Крутит','Отклонены','Бюджет','Пауза/Оплата','ПРОВЕРЬ','НЕТ СВЯЗИ','Бан']
   const techStatusList = Object.keys(techStatusGroups).sort((a, b) => {
     const ia = TECH_STATUS_ORDER.indexOf(a), ib = TECH_STATUS_ORDER.indexOf(b)
     if (ia === -1 && ib === -1) return a.localeCompare(b)
@@ -1286,23 +1325,29 @@ async function commitEdit() {
       case 'tech_status': {
         // Цвета и лейблы — из TECH_STATUS_MAP вверху файла (см. техStatusInfo).
         // Крутит зелёный; Отклонены/Бюджет/Пауза-Оплата оранжевый; НЕТ СВЯЗИ/Бан красный.
-        // «Бан» вычисляется по молчанию > watchdog_hours и перебивает то, что в БД.
+        // «Модерация» / «Бан» вычисляются (см. effectiveTechStatus) и перебивают
+        // то, что прислал скрипт. tech_note в этих случаях скрываем — он из
+        // старого/нерелевантного ингеста и сбивал бы с толку.
         const eff = effectiveTechStatus(a, watchdogHours)
         const isComputedBan = eff === 'Бан' && a.tech_status !== 'Бан'
+        const isComputedMod = eff === 'Модерация' && a.tech_status !== 'Модерация'
+        const isComputed = isComputedBan || isComputedMod
         const info = techStatusInfo(eff) || techStatusInfo(a.tech_status)
         const frozen = FROZEN.includes(a.status)
         const hasMetrics = mt.today_cost>0 || mt.clicks>0
         const note = a.tech_note || ''
-        const isRatio = !isComputedBan && /^\d+\/\d+$/.test(note)         // "2/5" у Крутит
+        const isRatio = !isComputed && /^\d+\/\d+$/.test(note)         // "2/5" у Крутит
         const maybeBan = a.tech_status==='НЕТ СВЯЗИ' && (mt.today_cost>0 || mt.yest_cost>0)
         const tooltip = isComputedBan
           ? `Молчит > ${watchdogHours}ч — скрипт мониторинга перестал отвечать, считаем баном`
-          : (note && !isRatio ? note : undefined)
+          : isComputedMod
+            ? 'Реклама ещё не запускалась — кликов и спенда не было ни разу, считаем модерацией'
+            : (note && !isRatio ? note : undefined)
         return (
           <span className="cell-sm" style={{color:info?info.c:'var(--t3)',fontFamily:'JetBrains Mono'}} title={tooltip}>
             {info?info.l:(a.tech_status||'—')}
-            {!isComputedBan && note && isRatio && <span style={{opacity:.8}}> {note}</span>}
-            {!isComputedBan && note && !isRatio && <span style={{opacity:.8,fontSize:10}}> ({note.length>22?note.slice(0,22)+'…':note})</span>}
+            {!isComputed && note && isRatio && <span style={{opacity:.8}}> {note}</span>}
+            {!isComputed && note && !isRatio && <span style={{opacity:.8,fontSize:10}}> ({note.length>22?note.slice(0,22)+'…':note})</span>}
             {maybeBan && <span className="ban-chip" title="Тратил и замолчал — возможно бан, проверь аккаунт">возможно бан</span>}
             {frozen && hasMetrics && <span title="Метрики приходят на замороженный аккаунт"> ⚠️</span>}
           </span>
