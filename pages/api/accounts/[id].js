@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '../../../lib/supabase'
 import { getUserIdFromRequest } from '../../../lib/auth'
 import { DEFAULT_STATUS_AUTOMATIONS, TERMINAL_STATUS_NAMES } from '../../../lib/defaults'
+import { effectiveTechStatus } from '../../../lib/techStatus'
 
 const METRIC_FIELDS = ['today_cost','today_clicks','today_cpc','today_conv','yest_cost','yest_clicks','yest_cpc','yest_conv']
 
@@ -27,13 +28,17 @@ export default async function handler(req, res) {
 
     if (!current) return res.status(404).json({ error: 'Not found' })
 
-    // Настройки автоматизаций (best-effort)
+    // Настройки автоматизаций (best-effort). watchdog/moderation тоже тянем
+    // здесь, чтобы при архивации (см. ниже) посчитать финальный effective
+    // tech-status тем же расчётом, что фронт и ингест.
     let autos = DEFAULT_STATUS_AUTOMATIONS
     let terminalNames = TERMINAL_STATUS_NAMES
+    let watchdogHrs = 2
+    let moderationHrs = 12
     try {
       const { data: us } = await supabaseAdmin
         .from('user_settings')
-        .select('status_automations, custom_statuses')
+        .select('status_automations, custom_statuses, watchdog_hours, moderation_hours')
         .eq('user_id', USER_ID)
         .maybeSingle()
       if (us?.status_automations && Object.keys(us.status_automations).length) autos = { ...autos, ...us.status_automations }
@@ -41,6 +46,8 @@ export default async function handler(req, res) {
         const t = us.custom_statuses.filter(s => s.category === 'terminal').map(s => s.name)
         if (t.length) terminalNames = t
       }
+      if (Number.isFinite(+us?.watchdog_hours) && +us.watchdog_hours > 0) watchdogHrs = +us.watchdog_hours
+      if (Number.isFinite(+us?.moderation_hours) && +us.moderation_hours > 0) moderationHrs = +us.moderation_hours
     } catch {}
 
     // Смена статуса (включая очистку в null)
@@ -128,6 +135,44 @@ export default async function handler(req, res) {
             status: body.status,
             updated_at: now.toISOString(),
           }, { onConflict: 'account_id,snapshot_date' })
+      } catch {}
+    }
+
+    // Архивация: фиксируем СНИМОК ЗА СЕГОДНЯ для обеих осей. Ингест после
+    // is_archived=true пропускает аккаунт (см. ingest.js:101), а ручная смена
+    // status не происходит в этом запросе — без этого upsert'а столбец «день
+    // архивации» для аккаунта может остаться пустым. Тех-статус считаем тем
+    // же effectiveTechStatus (без last_seen свежеет от now, так как ingest не
+    // отрабатывал — берём состояние "как есть"). Манyал — финальный body.status
+    // или current.status, если status в этом запросе не менялся.
+    // Срабатывает только на ПЕРЕХОДЕ false→true, не на каждый PATCH архивного.
+    if ('is_archived' in body && body.is_archived === true && current.is_archived !== true) {
+      try {
+        const after = { ...current, ...body }
+        const eff = effectiveTechStatus(after, watchdogHrs, moderationHrs)
+        if (eff) {
+          await supabaseAdmin
+            .from('daily_tech_status')
+            .upsert({
+              account_id: id,
+              user_id: USER_ID,
+              snapshot_date: today,
+              tech_status: eff,
+              updated_at: now.toISOString(),
+            }, { onConflict: 'account_id,snapshot_date' })
+        }
+        const manualNow = (('status' in body && body.status) ? body.status : current.status)
+        if (manualNow) {
+          await supabaseAdmin
+            .from('daily_manual_status')
+            .upsert({
+              account_id: id,
+              user_id: USER_ID,
+              snapshot_date: today,
+              status: manualNow,
+              updated_at: now.toISOString(),
+            }, { onConflict: 'account_id,snapshot_date' })
+        }
       } catch {}
     }
 
