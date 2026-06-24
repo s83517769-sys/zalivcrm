@@ -29,108 +29,6 @@ function DayTh({ d, today }) {
   )
 }
 
-// Линейный график по дням/статусам. Источник — by_day-карта из снимков
-// (daily_tech_status или daily_manual_status, в зависимости от режима таблицы).
-// X — только дни со снимками (не будущие, не пустые). Y — count аккаунтов.
-// Каждый статус — отдельная цветная линия + точки в позициях дат. Цвета —
-// resolve через colorOf(name), которая для tech идёт в TECH_STATUS_MAP, для
-// manual — в custom_statuses → STATUSES → серый fallback.
-// Чистый SVG, без библиотек — как остальные графики в проекте.
-function StatusLineChart({ byDay, statuses, colorOf, today, year, month }) {
-  const todayStr = `${year}-${String(month+1).padStart(2,'0')}-${String(today).padStart(2,'0')}`
-  const dates = Object.keys(byDay || {})
-    .filter(d => d <= todayStr)   // защита: будущие даты не рисуем, даже если случайно прилетели
-    .sort()
-
-  if (dates.length === 0) {
-    return (
-      <div style={{marginTop:12,padding:'20px 16px',textAlign:'center',color:'var(--t3)',fontSize:12,background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:6}}>
-        История пока пуста — график появится с первого снимка
-      </div>
-    )
-  }
-
-  const W = 900, H = 240
-  const padL = 36, padR = 16, padT = 14, padB = 26
-  const plotW = W - padL - padR
-  const plotH = H - padT - padB
-
-  let maxY = 0
-  for (const d of dates) for (const s of statuses) {
-    const v = byDay[d]?.[s] || 0
-    if (v > maxY) maxY = v
-  }
-  if (maxY < 1) maxY = 1
-
-  const xOf = i => dates.length === 1
-    ? padL + plotW / 2
-    : padL + (i / (dates.length - 1)) * plotW
-  const yOf = v => padT + plotH - (v / maxY) * plotH
-
-  // Y-тики: 0, середина, максимум; уникальные
-  const yTicks = [...new Set([0, Math.ceil(maxY/2), maxY])]
-
-  // X-подписи: каждый ~N-ый день + последний, чтобы метки не наезжали
-  const xLabelStep = Math.max(1, Math.ceil(dates.length / 12))
-
-  // Полилайны и точки по статусам
-  const seriesByStatus = statuses.map(s => {
-    const pts = dates.map((d, i) => `${xOf(i)},${yOf(byDay[d]?.[s] || 0)}`).join(' ')
-    const color = colorOf(s)
-    const dots = dates.map((d, i) => ({
-      x: xOf(i), y: yOf(byDay[d]?.[s] || 0),
-      v: byDay[d]?.[s] || 0,
-      d: parseInt(d.split('-')[2]),
-    }))
-    return { s, pts, color, dots }
-  })
-
-  return (
-    <div style={{marginTop:12}}>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:H,background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:6}}>
-        {/* Сетка + Y-подписи */}
-        {yTicks.map(v => {
-          const y = yOf(v)
-          return (
-            <g key={v}>
-              <line x1={padL} y1={y} x2={W-padR} y2={y} stroke="var(--bd)" strokeWidth="0.5"/>
-              <text x={padL-6} y={y+3} fontSize="9" textAnchor="end" fill="var(--t3)" fontFamily="JetBrains Mono,monospace">{v}</text>
-            </g>
-          )
-        })}
-        {/* X-подписи (дни) */}
-        {dates.map((d, i) => {
-          if (i % xLabelStep !== 0 && i !== dates.length - 1) return null
-          return (
-            <text key={d} x={xOf(i)} y={H-padB+14} fontSize="9" textAnchor="middle" fill="var(--t3)" fontFamily="JetBrains Mono,monospace">
-              {parseInt(d.split('-')[2])}
-            </text>
-          )
-        })}
-        {/* Линии */}
-        {seriesByStatus.map(({ s, pts, color }) => (
-          <polyline key={`l-${s}`} points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round"/>
-        ))}
-        {/* Точки (с тултипом) */}
-        {seriesByStatus.map(({ s, dots, color }) => dots.map((p, i) => (
-          <circle key={`p-${s}-${i}`} cx={p.x} cy={p.y} r="2.5" fill={color}>
-            <title>{`${s} · ${p.d}: ${p.v}`}</title>
-          </circle>
-        )))}
-      </svg>
-      {/* Легенда */}
-      <div style={{display:'flex',flexWrap:'wrap',gap:'6px 14px',marginTop:8,padding:'0 4px'}}>
-        {statuses.map(s => (
-          <span key={s} style={{display:'inline-flex',alignItems:'center',gap:6,fontSize:11,color:'var(--t2)'}}>
-            <span style={{width:14,height:2,background:colorOf(s),borderRadius:1,flexShrink:0}}/>
-            {s}
-          </span>
-        ))}
-      </div>
-    </div>
-  )
-}
-
 // Линейный график метрик. Метрики разного порядка (Cost ~$1400, Конверсии ~25,
 // CPA ~$2): на одной общей оси Y маленькие линии сплющивались бы в ноль. Здесь
 // каждая линия НОРМАЛИЗОВАНА в свой [0, max этой метрики]: занимает всю высоту,
@@ -344,8 +242,7 @@ export default function Stats() {
   // Для расчёта effectiveTechStatus на клиенте (режим «Текущее» в круговой)
   const [watchdogHours, setWatchdogHours] = useState(2)
   const [moderationHours, setModerationHours] = useState(12)
-  // Тип графика статусов и параметры круговой
-  const [chartKind, setChartKind] = useState('lines') // 'lines' | 'pie'
+  // Параметры круговой диаграммы статусов
   const [pieScope, setPieScope] = useState('now')    // 'now' (текущее состояние) | 'date'
   const [pieDate, setPieDate] = useState(null)        // 'YYYY-MM-DD'; null = сегодня
 
@@ -752,14 +649,12 @@ export default function Stats() {
                 </table>
               )}
 
-              {/* Переключатель типа графика + параметры круговой.
-                  Цвета и таблицы / линий / круга — один и тот же resolver. */}
+              {/* Круговая диаграмма долей статусов. Над ней — выбор периода
+                  («Текущее» по списку активных аккаунтов / «За дату» по снимку
+                  выбранного дня). Цвета секторов / таблицы — один resolver. */}
               <div style={{display:'flex',alignItems:'center',gap:8,marginTop:14,flexWrap:'wrap'}}>
-                <span style={{fontSize:11,color:'var(--t3)'}}>График:</span>
-                <button className={`btn${chartKind==='lines'?' act':''}`} onClick={()=>setChartKind('lines')}>📈 Линии</button>
-                <button className={`btn${chartKind==='pie'?' act':''}`} onClick={()=>setChartKind('pie')}>🍩 Круг</button>
-                {chartKind === 'pie' && (() => {
-                  // Доступные даты — только дни со снимками активного режима, не будущие
+                <span style={{fontSize:11,color:'var(--t3)'}}>Период:</span>
+                {(() => {
                   const byDay = statusKind === 'tech' ? techStats?.by_day : manualStats?.by_day
                   const todayStr = `${year}-${String(month+1).padStart(2,'0')}-${String(today).padStart(2,'0')}`
                   const availableDates = Object.keys(byDay || {})
@@ -768,7 +663,6 @@ export default function Stats() {
                   const currentDate = pieDate || availableDates[0] || todayStr
                   return (
                     <>
-                      <span style={{width:1,height:18,background:'var(--bd)',margin:'0 4px'}}/>
                       <button className={`btn${pieScope==='now'?' act':''}`} onClick={()=>setPieScope('now')} title="Текущее состояние всех активных аккаунтов">Текущее</button>
                       <button className={`btn${pieScope==='date'?' act':''}`} onClick={()=>setPieScope('date')} title="Снимок на выбранный день">За дату</button>
                       {pieScope === 'date' && (
@@ -786,21 +680,7 @@ export default function Stats() {
                 })()}
               </div>
 
-              {chartKind === 'lines' ? (
-                /* Линейный график — тот же источник, что выбран в таблице. Цвета
-                   линий resolve через тот же resolver, что и метки строк, поэтому
-                   «Бан» в легенде и «Бан» в таблице всегда одного цвета. */
-                <StatusLineChart
-                  byDay={statusKind === 'tech' ? techStats?.by_day : manualStats?.by_day}
-                  statuses={statusKind === 'tech' ? activeTechStatuses : activeManualStatuses}
-                  colorOf={s => statusKind === 'tech'
-                    ? (TECH_STATUS_MAP[s]?.c || '#6b7280')
-                    : colorOfManualStatus(s).color}
-                  today={today}
-                  year={year}
-                  month={month}
-                />
-              ) : (() => {
+              {(() => {
                 // Источник данных круговой — два режима:
                 //
                 //   'now'  ТЕКУЩЕЕ состояние: считаем по списку активных
