@@ -3,7 +3,7 @@ import Head from 'next/head'
 import Link from 'next/link'
 import { api } from '../lib/api'
 import { useAuth } from '../lib/useAuth'
-import { TECH_STATUS_MAP } from '../lib/techStatus'
+import { TECH_STATUS_MAP, effectiveTechStatus } from '../lib/techStatus'
 
 // Технические статусы для режима «По тех-статусам» — дефолтный набор строк
 // в каноническом порядке. Финальный список строится динамически из реальных
@@ -220,6 +220,86 @@ function MetricsLineChart({ defs, enabled, dataOf, days, today }) {
   )
 }
 
+// Круговая (donut) диаграмма долей статусов. counts — { name: number }, может
+// прийти из snapshot.by_day[date] (срез на конкретный день) или вычислиться
+// клиентом из активных аккаунтов (текущее состояние). Цвета secторов идут
+// через тот же colorOf, что у линий и таблицы — «Бан» в любой визуализации
+// один и тот же красный. Чистый SVG, без библиотек.
+function StatusPieChart({ counts, statuses, colorOf, totalLabel }) {
+  // Берём только статусы с реальной долей (> 0); сортируем по убыванию.
+  const entries = statuses
+    .map(s => ({ name: s, value: +counts[s] || 0 }))
+    .filter(e => e.value > 0)
+    .sort((a, b) => b.value - a.value)
+    .map(e => ({ ...e, color: colorOf(e.name) }))
+  const total = entries.reduce((s, e) => s + e.value, 0)
+
+  if (total === 0) {
+    return (
+      <div style={{marginTop:12,padding:'20px 16px',textAlign:'center',color:'var(--t3)',fontSize:12,background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:6}}>
+        Нет данных за выбранный период
+      </div>
+    )
+  }
+
+  const W = 360, H = 240
+  const cx = 120, cy = H / 2
+  const rOuter = 95, rInner = 56
+
+  // Строим секторы. Начинаем с 12 часов (угол -π/2), идём по часовой.
+  // Для одной полной доли (один статус = 100%) рисуем кольцо двумя
+  // полу-арками, иначе path с одинаковыми start/end не отрисуется.
+  let cum = -Math.PI / 2
+  const slices = entries.map(e => {
+    const angle = (e.value / total) * Math.PI * 2
+    const start = cum, end = cum + angle
+    cum = end
+    const pct = (e.value / total) * 100
+    let path
+    if (entries.length === 1) {
+      // Полное кольцо: два полу-арка + соединение по внутреннему радиусу
+      const top = `M ${cx} ${cy - rOuter} A ${rOuter} ${rOuter} 0 1 1 ${cx-0.01} ${cy - rOuter} Z`
+      const hole = `M ${cx} ${cy - rInner} A ${rInner} ${rInner} 0 1 0 ${cx-0.01} ${cy - rInner} Z`
+      path = top + ' ' + hole
+    } else {
+      const largeArc = angle > Math.PI ? 1 : 0
+      const x1 = cx + rOuter * Math.cos(start),  y1 = cy + rOuter * Math.sin(start)
+      const x2 = cx + rOuter * Math.cos(end),    y2 = cy + rOuter * Math.sin(end)
+      const x3 = cx + rInner * Math.cos(end),    y3 = cy + rInner * Math.sin(end)
+      const x4 = cx + rInner * Math.cos(start),  y4 = cy + rInner * Math.sin(start)
+      path = `M ${x1} ${y1} A ${rOuter} ${rOuter} 0 ${largeArc} 1 ${x2} ${y2} L ${x3} ${y3} A ${rInner} ${rInner} 0 ${largeArc} 0 ${x4} ${y4} Z`
+    }
+    return { ...e, path, pct, fillRule: entries.length === 1 ? 'evenodd' : 'nonzero' }
+  })
+
+  return (
+    <div style={{marginTop:12,background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:6,padding:12,display:'flex',gap:16,alignItems:'center',flexWrap:'wrap'}}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{width:W,maxWidth:'100%',height:H,flexShrink:0}}>
+        {slices.map((s, i) => (
+          <path key={s.name+i} d={s.path} fill={s.color} fillRule={s.fillRule} stroke="var(--s2)" strokeWidth="1.5">
+            <title>{`${s.name}: ${s.value} (${s.pct.toFixed(1)}%)`}</title>
+          </path>
+        ))}
+        {/* Центр: суммарное число + подпись */}
+        <text x={cx} y={cy-2} textAnchor="middle" fontSize="22" fontWeight="500" fill="var(--t)" fontFamily="JetBrains Mono,monospace">{total}</text>
+        <text x={cx} y={cy+14} textAnchor="middle" fontSize="9" fill="var(--t3)">{totalLabel || 'аккаунтов'}</text>
+      </svg>
+      {/* Легенда: статус N — P% */}
+      <div style={{display:'flex',flexDirection:'column',gap:6,minWidth:180,fontSize:12}}>
+        {slices.map(s => (
+          <div key={s.name} style={{display:'flex',alignItems:'center',gap:8}}>
+            <span style={{width:10,height:10,borderRadius:2,background:s.color,flexShrink:0}}/>
+            <span style={{color:'var(--t)'}}>{s.name}</span>
+            <span style={{color:'var(--t3)',marginLeft:'auto',fontFamily:'JetBrains Mono,monospace'}}>
+              {s.value} — {s.pct.toFixed(0)}%
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 const STATUSES = [
   { key: 'Пуск',          color: '#4ea8de', bg: 'rgba(78,168,222,.12)' },
   { key: 'Модерация',     color: '#f5a623', bg: 'rgba(245,166,35,.12)' },
@@ -261,6 +341,13 @@ export default function Stats() {
   const [techStats, setTechStats] = useState(null) // { by_day:{}, first_snapshot:null }
   const [manualStats, setManualStats] = useState(null) // зеркало для ручных снимков
   const [customStatuses, setCustomStatuses] = useState([]) // палитра ручных статусов из настроек
+  // Для расчёта effectiveTechStatus на клиенте (режим «Текущее» в круговой)
+  const [watchdogHours, setWatchdogHours] = useState(2)
+  const [moderationHours, setModerationHours] = useState(12)
+  // Тип графика статусов и параметры круговой
+  const [chartKind, setChartKind] = useState('lines') // 'lines' | 'pie'
+  const [pieScope, setPieScope] = useState('now')    // 'now' (текущее состояние) | 'date'
+  const [pieDate, setPieDate] = useState(null)        // 'YYYY-MM-DD'; null = сегодня
 
   const now = new Date()
   const year = now.getFullYear()
@@ -288,6 +375,10 @@ export default function Stats() {
     api('/api/users/settings')
       .then(r => {
         if (Array.isArray(r?.settings?.custom_statuses)) setCustomStatuses(r.settings.custom_statuses)
+        const wh = +r?.settings?.watchdog_hours
+        const mh = +r?.settings?.moderation_hours
+        if (Number.isFinite(wh) && wh > 0) setWatchdogHours(wh)
+        if (Number.isFinite(mh) && mh > 0) setModerationHours(mh)
       })
       .catch(() => {})
   }, [])
@@ -661,19 +752,102 @@ export default function Stats() {
                 </table>
               )}
 
-              {/* Линейный график — тот же источник, что выбран в таблице. Цвета линий
-                  resolve через тот же resolver, что и метки строк, поэтому «Бан» в
-                  легенде и «Бан» в таблице всегда одного цвета. */}
-              <StatusLineChart
-                byDay={statusKind === 'tech' ? techStats?.by_day : manualStats?.by_day}
-                statuses={statusKind === 'tech' ? activeTechStatuses : activeManualStatuses}
-                colorOf={s => statusKind === 'tech'
-                  ? (TECH_STATUS_MAP[s]?.c || '#6b7280')
-                  : colorOfManualStatus(s).color}
-                today={today}
-                year={year}
-                month={month}
-              />
+              {/* Переключатель типа графика + параметры круговой.
+                  Цвета и таблицы / линий / круга — один и тот же resolver. */}
+              <div style={{display:'flex',alignItems:'center',gap:8,marginTop:14,flexWrap:'wrap'}}>
+                <span style={{fontSize:11,color:'var(--t3)'}}>График:</span>
+                <button className={`btn${chartKind==='lines'?' act':''}`} onClick={()=>setChartKind('lines')}>📈 Линии</button>
+                <button className={`btn${chartKind==='pie'?' act':''}`} onClick={()=>setChartKind('pie')}>🍩 Круг</button>
+                {chartKind === 'pie' && (() => {
+                  // Доступные даты — только дни со снимками активного режима, не будущие
+                  const byDay = statusKind === 'tech' ? techStats?.by_day : manualStats?.by_day
+                  const todayStr = `${year}-${String(month+1).padStart(2,'0')}-${String(today).padStart(2,'0')}`
+                  const availableDates = Object.keys(byDay || {})
+                    .filter(d => d <= todayStr)
+                    .sort((a,b) => b.localeCompare(a)) // свежие сверху
+                  const currentDate = pieDate || availableDates[0] || todayStr
+                  return (
+                    <>
+                      <span style={{width:1,height:18,background:'var(--bd)',margin:'0 4px'}}/>
+                      <button className={`btn${pieScope==='now'?' act':''}`} onClick={()=>setPieScope('now')} title="Текущее состояние всех активных аккаунтов">Текущее</button>
+                      <button className={`btn${pieScope==='date'?' act':''}`} onClick={()=>setPieScope('date')} title="Снимок на выбранный день">За дату</button>
+                      {pieScope === 'date' && (
+                        availableDates.length > 0
+                          ? <select className="btn" value={currentDate} onChange={e=>setPieDate(e.target.value)} style={{padding:'4px 6px'}}>
+                              {availableDates.map(d => {
+                                const [y,m,dd] = d.split('-')
+                                return <option key={d} value={d}>{`${dd}.${m}.${y}${d===todayStr?' (сегодня)':''}`}</option>
+                              })}
+                            </select>
+                          : <span style={{fontSize:11,color:'var(--t3)'}}>нет снимков</span>
+                      )}
+                    </>
+                  )
+                })()}
+              </div>
+
+              {chartKind === 'lines' ? (
+                /* Линейный график — тот же источник, что выбран в таблице. Цвета
+                   линий resolve через тот же resolver, что и метки строк, поэтому
+                   «Бан» в легенде и «Бан» в таблице всегда одного цвета. */
+                <StatusLineChart
+                  byDay={statusKind === 'tech' ? techStats?.by_day : manualStats?.by_day}
+                  statuses={statusKind === 'tech' ? activeTechStatuses : activeManualStatuses}
+                  colorOf={s => statusKind === 'tech'
+                    ? (TECH_STATUS_MAP[s]?.c || '#6b7280')
+                    : colorOfManualStatus(s).color}
+                  today={today}
+                  year={year}
+                  month={month}
+                />
+              ) : (() => {
+                // Источник данных круговой — два режима:
+                //
+                //   'now'  ТЕКУЩЕЕ состояние: считаем по списку активных
+                //          аккаунтов клиентским способом — для tech это та же
+                //          effectiveTechStatus, что показывает основная таблица
+                //          (один аккаунт = один статус); для manual — просто
+                //          a.status. Не зависит от того, был ли сегодня ингест.
+                //
+                //   'date' СНИМОК НА ДЕНЬ: уже-агрегированный by_day[date] из
+                //          /api/stats/(manual|tech)-status. Каждый аккаунт
+                //          присутствует один раз — по своему статусу в тот день.
+                //
+                // В обоих режимах ровно один сектор на статус, что и требуется.
+                const byDay = statusKind === 'tech' ? techStats?.by_day : manualStats?.by_day
+                const todayStr = `${year}-${String(month+1).padStart(2,'0')}-${String(today).padStart(2,'0')}`
+                const availableDates = Object.keys(byDay || {}).filter(d => d <= todayStr).sort((a,b)=>b.localeCompare(a))
+                const currentDate = pieDate || availableDates[0] || todayStr
+                let counts = {}
+                let statusesForPie
+                if (pieScope === 'date') {
+                  counts = byDay?.[currentDate] || {}
+                  statusesForPie = statusKind === 'tech' ? activeTechStatuses : activeManualStatuses
+                } else {
+                  // 'now' — считаем по активным аккаунтам
+                  for (const a of accounts) {
+                    let name = ''
+                    if (statusKind === 'tech') name = effectiveTechStatus(a, watchdogHours, moderationHours)
+                    else name = a.status
+                    if (name) counts[name] = (counts[name] || 0) + 1
+                  }
+                  // Для статусов из текущих аккаунтов используем union: то, что в counts +
+                  // активные из таблицы (на случай если custom-статус есть, но 0 аккаунтов).
+                  const set = new Set(Object.keys(counts))
+                  ;(statusKind === 'tech' ? activeTechStatuses : activeManualStatuses).forEach(s => set.add(s))
+                  statusesForPie = [...set]
+                }
+                return (
+                  <StatusPieChart
+                    counts={counts}
+                    statuses={statusesForPie}
+                    colorOf={s => statusKind === 'tech'
+                      ? (TECH_STATUS_MAP[s]?.c || '#6b7280')
+                      : colorOfManualStatus(s).color}
+                    totalLabel={pieScope === 'now' ? 'сейчас' : `${currentDate.split('-').reverse().join('.')}`}
+                  />
+                )
+              })()}
             </>
           )}
 
