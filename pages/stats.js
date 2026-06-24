@@ -518,15 +518,35 @@ export default function Stats() {
         <div className="page-title">Ежедневная сводка</div>
         <div className="page-sub">{monthName} · {accounts.length} аккаунтов</div>
 
-        {/* Summary cards */}
-        <div className="summary-cards">
-          <div className="sc"><div className="sc-l">Всего акк.</div><div className="sc-v">{accounts.length}</div></div>
-          <div className="sc"><div className="sc-l">Крутит</div><div className="sc-v g">{accounts.filter(a=>a.status&&a.status.includes('Крутит')).length}</div></div>
-          <div className="sc"><div className="sc-l">БАН / На смену</div><div className="sc-v r">{accounts.filter(a=>['БАН','На смену'].includes(a.status)).length}</div></div>
-          <div className="sc"><div className="sc-l">Cost этот мес.</div><div className="sc-v g">{totalCost>0?'$'+Math.round(totalCost).toLocaleString('ru'):'—'}</div></div>
-          <div className="sc"><div className="sc-l">Клики</div><div className="sc-v">{totalClicks>0?totalClicks.toLocaleString('ru'):'—'}</div></div>
-          <div className="sc"><div className="sc-l">Конв. / CPA</div><div className="sc-v a">{totalConv>0?`${totalConv} / $${avgCpa.toFixed(0)}`:'—'}</div></div>
-        </div>
+        {/* Summary cards. Статусные (Крутит / Бан) следуют за переключателем
+            Ручные / Технические и считают теми же правилами, что таблица и
+            круг: в техрежиме — через effectiveTechStatus (тот же импорт из
+            lib/techStatus.js), в ручном — по a.status. Метрики (Cost / Клики /
+            Конв / CPA) от статуса не зависят, они общие для обоих режимов. */}
+        {(() => {
+          const isTech = statusKind === 'tech'
+          let krutit = 0, ban = 0
+          for (const a of accounts) {
+            if (isTech) {
+              const eff = effectiveTechStatus(a, watchdogHours, moderationHours)
+              if (eff === 'Крутит') krutit++
+              else if (eff === 'Бан') ban++
+            } else {
+              if (a.status && a.status.includes('Крутит')) krutit++
+              else if (['БАН','На смену'].includes(a.status)) ban++
+            }
+          }
+          return (
+            <div className="summary-cards">
+              <div className="sc"><div className="sc-l">Всего акк.</div><div className="sc-v">{accounts.length}</div></div>
+              <div className="sc"><div className="sc-l">Крутит</div><div className="sc-v g">{krutit}</div></div>
+              <div className="sc"><div className="sc-l">{isTech ? 'Бан' : 'БАН / На смену'}</div><div className="sc-v r">{ban}</div></div>
+              <div className="sc"><div className="sc-l">Cost этот мес.</div><div className="sc-v g">{totalCost>0?'$'+Math.round(totalCost).toLocaleString('ru'):'—'}</div></div>
+              <div className="sc"><div className="sc-l">Клики</div><div className="sc-v">{totalClicks>0?totalClicks.toLocaleString('ru'):'—'}</div></div>
+              <div className="sc"><div className="sc-l">Конв. / CPA</div><div className="sc-v a">{totalConv>0?`${totalConv} / $${avgCpa.toFixed(0)}`:'—'}</div></div>
+            </div>
+          )
+        })()}
 
         <div className="table-wrap">
           {view === 'status' && (
