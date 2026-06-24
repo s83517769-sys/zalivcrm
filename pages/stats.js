@@ -198,6 +198,241 @@ function StatusPieChart({ counts, statuses, colorOf, totalLabel }) {
   )
 }
 
+// ── Аналитика ────────────────────────────────────────────────────────────
+// Карточка с заголовком + содержимым. Серый паддинг-фон, тонкая рамка —
+// единый стиль для всех 5 секций аналитики.
+function AnaCard({ title, hint, children }) {
+  return (
+    <div style={{background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:8,padding:14,marginBottom:12}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',gap:8,marginBottom:10}}>
+        <div style={{fontSize:12,fontWeight:500,color:'var(--t)',textTransform:'uppercase',letterSpacing:'.05em'}}>{title}</div>
+        {hint && <div style={{fontSize:10,color:'var(--t3)'}}>{hint}</div>}
+      </div>
+      {children}
+    </div>
+  )
+}
+function BigNum({ value, sub, color }) {
+  return (
+    <div style={{display:'flex',alignItems:'baseline',gap:8}}>
+      <span style={{fontSize:28,fontWeight:500,color:color||'var(--t)',fontFamily:'JetBrains Mono,monospace'}}>{value}</span>
+      {sub && <span style={{fontSize:11,color:'var(--t3)'}}>{sub}</span>}
+    </div>
+  )
+}
+function StatRow({ items }) {
+  return (
+    <div style={{display:'flex',flexWrap:'wrap',gap:'4px 18px',marginTop:6,fontSize:11,color:'var(--t2)',fontFamily:'JetBrains Mono,monospace'}}>
+      {items.map((it, i) => (
+        <span key={i}><span style={{color:'var(--t3)'}}>{it.label}</span> {it.value}</span>
+      ))}
+    </div>
+  )
+}
+// Простая горизонтальная bar-гистограмма по бакетам — SVG, как остальные графики
+function MiniHistogram({ buckets, color = '#5b6ef5' }) {
+  if (!buckets || buckets.length === 0) return null
+  const max = Math.max(1, ...buckets.map(b => b.count))
+  const W = 600, H = 90
+  const padL = 4, padR = 4, padT = 4, padB = 18
+  const plotW = W - padL - padR
+  const plotH = H - padT - padB
+  const barW = plotW / buckets.length
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:H,marginTop:8}}>
+      {buckets.map((b, i) => {
+        const h = (b.count / max) * plotH
+        const x = padL + i * barW + 2
+        const y = padT + plotH - h
+        return (
+          <g key={i}>
+            <rect x={x} y={y} width={barW - 4} height={h} fill={color} opacity={b.count>0?0.85:0.15} rx="2">
+              <title>{`${b.label}: ${b.count}`}</title>
+            </rect>
+            {b.count > 0 && <text x={x + (barW-4)/2} y={y - 2} fontSize="8" textAnchor="middle" fill="var(--t2)" fontFamily="JetBrains Mono,monospace">{b.count}</text>}
+            <text x={x + (barW-4)/2} y={H - 4} fontSize="8" textAnchor="middle" fill="var(--t3)" fontFamily="JetBrains Mono,monospace">{b.label}</text>
+          </g>
+        )
+      })}
+    </svg>
+  )
+}
+// Bar-chart по дням (для тренда банов внутри месяца)
+function DayBars({ data }) {
+  if (!data || data.length === 0) return null
+  const max = Math.max(1, ...data.map(d => d.count))
+  const W = 600, H = 80
+  const padL = 4, padR = 4, padT = 4, padB = 16
+  const plotW = W - padL - padR
+  const plotH = H - padT - padB
+  const barW = plotW / data.length
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:H,marginTop:8}}>
+      {data.map((d, i) => {
+        const h = (d.count / max) * plotH
+        const x = padL + i * barW + 1
+        const y = padT + plotH - h
+        const isShownLabel = d.day === 1 || d.day === data.length || d.day % 5 === 0
+        return (
+          <g key={d.day}>
+            <rect x={x} y={y} width={barW - 2} height={Math.max(h, d.count > 0 ? 2 : 0)} fill="#f05555" opacity={d.count>0?0.85:0} rx="1">
+              <title>{`${d.day}: ${d.count}`}</title>
+            </rect>
+            {isShownLabel && <text x={x + (barW-2)/2} y={H - 3} fontSize="8" textAnchor="middle" fill="var(--t3)" fontFamily="JetBrains Mono,monospace">{d.day}</text>}
+          </g>
+        )
+      })}
+    </svg>
+  )
+}
+// Горизонтальные бары для воронки и причин
+function HBar({ label, value, max, total, color }) {
+  const pct = max > 0 ? (value / max) * 100 : 0
+  const pctOfTotal = total > 0 ? (value / total) * 100 : 0
+  return (
+    <div style={{marginBottom:6}}>
+      <div style={{display:'flex',justifyContent:'space-between',fontSize:11,color:'var(--t2)',marginBottom:2}}>
+        <span style={{color:'var(--t)'}}>{label}</span>
+        <span style={{fontFamily:'JetBrains Mono,monospace'}}>{value} <span style={{color:'var(--t3)'}}>— {pctOfTotal.toFixed(0)}%</span></span>
+      </div>
+      <div style={{height:8,background:'var(--bd)',borderRadius:2,overflow:'hidden'}}>
+        <div style={{width:`${pct}%`,height:'100%',background:color||'#5b6ef5',transition:'width .2s'}}/>
+      </div>
+    </div>
+  )
+}
+
+function AnalyticsView({ data, loading, statusKind, setStatusKind }) {
+  // Переключатель Ручные/Технические виден прямо тут, чтобы юзер сразу видел
+  // в каком режиме считаются метрики (источник банов разный — см. notes).
+  return (
+    <div>
+      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10,flexWrap:'wrap'}}>
+        <span style={{fontSize:11,color:'var(--t3)'}}>Источник банов:</span>
+        <button className={`btn${statusKind==='manual'?' act':''}`} onClick={()=>setStatusKind('manual')}>Ручные</button>
+        <button className={`btn${statusKind==='tech'?' act':''}`} onClick={()=>setStatusKind('tech')}>Технические</button>
+        <span style={{fontSize:11,color:'var(--t3)',marginLeft:'auto'}}>
+          {statusKind === 'tech'
+            ? 'баны = первый день в снимке daily_tech_status со статусом «Бан»'
+            : 'баны = accounts.ban_date (когда статус перешёл в БАН / На смену / Отмена запуска)'}
+        </span>
+      </div>
+
+      {loading && <div style={{textAlign:'center',padding:40,color:'var(--t3)',fontSize:12}}>Загрузка аналитики…</div>}
+
+      {!loading && data && (() => {
+        const { lifetime, ban_trend, burn, reasons, funnel, notes } = data
+        return (
+          <>
+            {/* ── 1. Срок жизни ── */}
+            <AnaCard title="Срок жизни аккаунта (до бана)" hint="дни от первого «Крутит» до бана">
+              {lifetime?.insufficient ? (
+                <div style={{fontSize:12,color:'var(--t3)'}}>Недостаточно банов для статистики (нужно ≥3, есть {lifetime.count ?? 0}). Метрика наполнится с накоплением банов.</div>
+              ) : (
+                <>
+                  <BigNum value={`${lifetime.avg_days} д`} sub={`в среднем по ${lifetime.count} забаненным`}/>
+                  <StatRow items={[
+                    {label:'медиана:', value:`${lifetime.median} д`},
+                    {label:'мин:', value:`${lifetime.min} д`},
+                    {label:'макс:', value:`${lifetime.max} д`},
+                  ]}/>
+                  <MiniHistogram buckets={lifetime.histogram} color="#22d17a"/>
+                </>
+              )}
+            </AnaCard>
+
+            {/* ── 2. % банов + тренд ── */}
+            <AnaCard title="Баны за период" hint="по дате бана соответствующего режима">
+              <BigNum
+                value={`${ban_trend.pct_in_period}%`}
+                sub={`${ban_trend.banned_in_period} забанено в этом месяце из ${ban_trend.total_known_accounts} аккаунтов`}
+                color="#f05555"
+              />
+              <StatRow items={[
+                {label:'всего банов за всю историю:', value:ban_trend.banned_total},
+                {label:'% от всех известных аккаунтов:', value:`${ban_trend.pct_total}%`},
+              ]}/>
+              {ban_trend.banned_in_period > 0 ? (
+                <DayBars data={ban_trend.by_day}/>
+              ) : (
+                <div style={{fontSize:12,color:'var(--t3)',marginTop:8}}>Банов за этот месяц не было.</div>
+              )}
+            </AnaCard>
+
+            {/* ── 3. Burn до бана ── */}
+            <AnaCard title="Burn до бана (USD)" hint="сумма cost_usd × курс из настроек, до даты бана">
+              {burn.count === 0 ? (
+                <div style={{fontSize:12,color:'var(--t3)'}}>Burn посчитать не из чего — забаненных с метриками нет.</div>
+              ) : burn.insufficient ? (
+                <>
+                  <BigNum value={`$${burn.total_usd?.toLocaleString('ru')||0}`} sub={`всего по ${burn.count} забаненным`} color="#22d17a"/>
+                  <div style={{fontSize:12,color:'var(--t3)',marginTop:6}}>Недостаточно для распределения (нужно ≥3, есть {burn.count}). Накопится.</div>
+                </>
+              ) : (
+                <>
+                  <BigNum value={`$${burn.total_usd.toLocaleString('ru')}`} sub={`всего по ${burn.count} забаненным`} color="#22d17a"/>
+                  <StatRow items={[
+                    {label:'в среднем:', value:`$${burn.avg_usd.toLocaleString('ru')}`},
+                    {label:'медиана:', value:`$${burn.median.toLocaleString('ru')}`},
+                    {label:'макс:', value:`$${burn.max.toLocaleString('ru')}`},
+                  ]}/>
+                  <MiniHistogram buckets={burn.histogram} color="#22d17a"/>
+                </>
+              )}
+            </AnaCard>
+
+            {/* ── 4. Причины бана ── */}
+            <AnaCard title="Причины бана" hint="ban_reason — ручное поле в карточке аккаунта">
+              {reasons.length === 0 || (reasons.length === 1 && reasons[0].count === 0) ? (
+                <div style={{fontSize:12,color:'var(--t3)'}}>Банов нет — причины показывать не из чего.</div>
+              ) : (() => {
+                const max = Math.max(...reasons.map(r => r.count))
+                const total = reasons.reduce((s, r) => s + r.count, 0)
+                return reasons.map(r => (
+                  <HBar key={r.reason}
+                    label={r.reason}
+                    value={r.count}
+                    max={max}
+                    total={total}
+                    color={r.reason === 'Не указано' ? 'var(--t3)' : '#f5a623'}
+                  />
+                ))
+              })()}
+            </AnaCard>
+
+            {/* ── 5. Воронка ── */}
+            <AnaCard title="Воронка из созданных в этом месяце" hint="когорта = created_at в текущем месяце">
+              {funnel.created_in_period === 0 ? (
+                <div style={{fontSize:12,color:'var(--t3)'}}>За этот месяц новых аккаунтов не создавалось.</div>
+              ) : (
+                <>
+                  <HBar label="Создано" value={funnel.created_in_period} max={funnel.created_in_period} total={funnel.created_in_period} color="#5b6ef5"/>
+                  <HBar label="Дошло до «Крутит»" value={funnel.reached_crut} max={funnel.created_in_period} total={funnel.created_in_period} color="#22d17a"/>
+                  <HBar label="Забанено" value={funnel.banned} max={funnel.created_in_period} total={funnel.created_in_period} color="#f05555"/>
+                </>
+              )}
+            </AnaCard>
+
+            {/* ── Notes ── */}
+            {notes && notes.length > 0 && (
+              <div style={{background:'var(--s1)',border:'1px solid var(--bd)',borderRadius:6,padding:'8px 12px',fontSize:11,color:'var(--t3)',lineHeight:1.5}}>
+                <div style={{fontWeight:500,marginBottom:4,color:'var(--t2)'}}>Дисклеймер:</div>
+                <ul style={{margin:0,paddingLeft:18}}>{notes.map((n, i) => <li key={i}>{n}</li>)}</ul>
+              </div>
+            )}
+          </>
+        )
+      })()}
+
+      {!loading && !data && (
+        <div style={{textAlign:'center',padding:40,color:'var(--t3)',fontSize:12}}>
+          Не удалось загрузить аналитику. Проверь, что миграция analytics_indexes выполнена.
+        </div>
+      )}
+    </div>
+  )
+}
+
 const STATUSES = [
   { key: 'Пуск',          color: '#4ea8de', bg: 'rgba(78,168,222,.12)' },
   { key: 'Модерация',     color: '#f5a623', bg: 'rgba(245,166,35,.12)' },
@@ -242,6 +477,9 @@ export default function Stats() {
   // Для расчёта effectiveTechStatus на клиенте (режим «Текущее» в круговой)
   const [watchdogHours, setWatchdogHours] = useState(2)
   const [moderationHours, setModerationHours] = useState(12)
+  // Аналитика — данные эндпоинта по текущему режиму Ручные/Технические + месяц
+  const [analytics, setAnalytics] = useState(null)
+  const [analyticsLoading, setAnalyticsLoading] = useState(false)
   // Параметры круговой диаграммы статусов
   const [pieScope, setPieScope] = useState('now')    // 'now' (текущее состояние) | 'date'
   const [pieDate, setPieDate] = useState(null)        // 'YYYY-MM-DD'; null = сегодня
@@ -283,6 +521,16 @@ export default function Stats() {
   useEffect(() => {
     document.body.className = dark ? 'dark' : 'light'
   }, [dark])
+
+  // Грузим аналитику при заходе на вкладку или смене режима Ручные/Технические.
+  useEffect(() => {
+    if (view !== 'analytics') return
+    setAnalyticsLoading(true)
+    api(`/api/stats/analytics?year=${year}&month=${month + 1}&mode=${statusKind}`)
+      .then(r => setAnalytics(r))
+      .catch(() => setAnalytics(null))
+      .finally(() => setAnalyticsLoading(false))
+  }, [view, statusKind, year, month])
 
   async function load() {
     setLoading(true)
@@ -506,6 +754,7 @@ export default function Stats() {
         <div style={{marginLeft:'auto',display:'flex',gap:5}}>
           <button className={`btn${view==='status'?' act':''}`} onClick={()=>setView('status')}>По статусам</button>
           <button className={`btn${view==='cost'?' act':''}`} onClick={()=>setView('cost')}>По метрикам</button>
+          <button className={`btn${view==='analytics'?' act':''}`} onClick={()=>setView('analytics')}>🔬 Аналитика</button>
           {zalivshiki.length > 0 && <button className={`btn${view==='zalivshik'?' act':''}`} onClick={()=>setView('zalivshik')}>По заливщикам</button>}
           <div className="sep"/>
           <button className="btn" onClick={()=>{const n=dark?'light':'dark';setDark(n==='dark');localStorage.setItem('zcrm_theme',n)}}>{dark?'☀️':'🌙'}</button>
@@ -860,6 +1109,15 @@ export default function Stats() {
               }}
             />
           </>)}
+
+          {view === 'analytics' && (
+            <AnalyticsView
+              data={analytics}
+              loading={analyticsLoading}
+              statusKind={statusKind}
+              setStatusKind={setStatusKind}
+            />
+          )}
 
           {view === 'zalivshik' && (
             <table>
