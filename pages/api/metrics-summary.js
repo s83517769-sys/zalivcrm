@@ -4,6 +4,30 @@ import { getUserIdFromRequest } from '../../lib/auth'
 
 const DEFAULT_TZ = 'Asia/Nicosia'
 
+// Пагинированная выборка hourly_metrics. Supabase / PostgREST по умолчанию
+// возвращает максимум 1000 строк на запрос — при 60+ активных аккаунтах ×
+// 3 дня × 24 часа лимит срабатывает и отрезает хвост (наиболее свежие часы
+// = «сегодня»). Цикл .range(from, from + 999) тянет страницы пока возвращается
+// полная (== pageSize) — иначе выходим.
+async function fetchAllHourly(supabase, userId, sinceDate, columns) {
+  const pageSize = 1000
+  const all = []
+  let from = 0
+  while (true) {
+    const { data, error } = await supabase
+      .from('hourly_metrics')
+      .select(columns)
+      .eq('user_id', userId)
+      .gte('metric_date', sinceDate)
+      .range(from, from + pageSize - 1)
+    if (error) return { data: null, error }
+    if (data && data.length) all.push(...data)
+    if (!data || data.length < pageSize) break
+    from += pageSize
+  }
+  return { data: all, error: null }
+}
+
 export default async function handler(req, res) {
   const USER_ID = await getUserIdFromRequest(req)
   if (!USER_ID) return res.status(401).json({ error: 'Unauthorized' })
@@ -42,11 +66,10 @@ export default async function handler(req, res) {
     // Считаем по UTC-дате с запасом 2 дня вперёд/назад от текущей.
     const utcNow = DateTime.utc()
     const sinceDate = utcNow.minus({ days: 2 }).toISODate()
-    const { data: hours, error: hErr } = await supabaseAdmin
-      .from('hourly_metrics')
-      .select('account_id, metric_date, account_timezone, cost_native, clicks, conversions')
-      .eq('user_id', USER_ID)
-      .gte('metric_date', sinceDate)
+    const { data: hours, error: hErr } = await fetchAllHourly(
+      supabaseAdmin, USER_ID, sinceDate,
+      'account_id, metric_date, account_timezone, cost_native, clicks, conversions'
+    )
     if (hErr) return res.status(500).json({ error: hErr.message })
 
     // Группируем часы по account_id + понимаем пояс аккаунта (из самих часов или из accounts).
@@ -90,19 +113,32 @@ export default async function handler(req, res) {
       if (buckets.yesterday.cost > 0 || buckets.yesterday.clicks > 0 || buckets.yesterday.conv > 0) entry.yesterday = pack(buckets.yesterday)
     }
 
-    // Фолбэк на daily_metrics — для аккаунтов на старом скрипте без часов
-    const todayLegacy = utcNow.toISODate()
-    const yesterdayLegacy = utcNow.minus({ days: 1 }).toISODate()
+    // Daily-фоллбэк = AUGMENT, не skip. Раньше блок пропускал аккаунт с любыми
+    // hourly-строками (`if (hourlyAccounts.has(...)) continue`) — из-за этого
+    // если today-часы не подтянулись (лимит 1000, gap скрипта, любое), summary
+    // оставался без today, хотя daily_metrics за сегодня в БД был.
+    //
+    // Теперь: для каждой daily-строки определяем, относится ли она к «сегодня»
+    // / «вчера» В ПОЯСЕ АККАУНТА (как в hourly-бакетах выше). hourly остаётся
+    // приоритетным — daily проставляем только если entry.today/yesterday ещё
+    // не выставлен. Окно расширяю до 3-х UTC-дней, чтобы покрыть случаи когда
+    // account-TZ today сдвинут относительно UTC даты, по которой ingest пишет
+    // metric_date.
+    const dailyWindowStart = utcNow.minus({ days: 2 }).toISODate()
     const { data: dms } = await supabaseAdmin
       .from('daily_metrics')
       .select('account_id, metric_date, clicks, cpc_usd, cost_usd, conversions, cpa')
       .eq('user_id', USER_ID)
-      .in('metric_date', [todayLegacy, yesterdayLegacy])
+      .gte('metric_date', dailyWindowStart)
     for (const row of (dms || [])) {
-      if (hourlyAccounts.has(row.account_id)) continue
-      const entry = summary[row.account_id] || (summary[row.account_id] = { currency: accMap[row.account_id]?.currency || 'USD' })
-      if (row.metric_date === todayLegacy) entry.today = row
-      else entry.yesterday = row
+      const acc = accMap[row.account_id]
+      const zoneRaw = acc?.account_timezone || 'UTC'
+      const zone = DateTime.local().setZone(zoneRaw).isValid ? zoneRaw : 'UTC'
+      const todayAcc     = DateTime.now().setZone(zone).toISODate()
+      const yesterdayAcc = DateTime.now().setZone(zone).minus({ days: 1 }).toISODate()
+      const entry = summary[row.account_id] || (summary[row.account_id] = { currency: acc?.currency || 'USD' })
+      if      (row.metric_date === todayAcc     && !entry.today)     entry.today = row
+      else if (row.metric_date === yesterdayAcc && !entry.yesterday) entry.yesterday = row
     }
 
     return res.status(200).json({ summary, user_timezone: userTz, spend_by_user_tz: false })
@@ -128,14 +164,16 @@ export default async function handler(req, res) {
 
   // 1. Аккаунты с почасовыми данными — пересборка под пояс пользователя.
   // Окно в 3 даты по поясу аккаунта покрывает любые смещения (-12..+14) и DST.
+  // Тянем пагинированно — обходим дефолтный лимит Supabase 1000 строк (см.
+  // fetchAllHourly наверху файла), иначе при росте числа аккаунтов хвост
+  // (свежие часы = «сегодня») снова потеряется.
   const sinceDate = nowU.minus({ days: 2 }).toISODate()
   const hourlyAccounts = new Set()
   try {
-    const { data: hours } = await supabaseAdmin
-      .from('hourly_metrics')
-      .select('account_id, metric_date, hour, account_timezone, cost_native, clicks, conversions')
-      .eq('user_id', USER_ID)
-      .gte('metric_date', sinceDate)
+    const { data: hours } = await fetchAllHourly(
+      supabaseAdmin, USER_ID, sinceDate,
+      'account_id, metric_date, hour, account_timezone, cost_native, clicks, conversions'
+    )
 
     const buckets = {} // account_id -> { today:{...}, yesterday:{...} }
     for (const h of (hours || [])) {
@@ -174,22 +212,24 @@ export default async function handler(req, res) {
     console.error('hourly summary error:', e)
   }
 
-  // 2. Фолбэк для аккаунтов на старом скрипте — daily_metrics как раньше
-  const todayLegacy = new Date().toISOString().split('T')[0]
-  const yesterdayLegacy = new Date(Date.now() - 86400000).toISOString().split('T')[0]
+  // 2. Daily-фоллбэк = AUGMENT, не skip (см. комментарий в OFF-режиме выше).
+  // hourly остаётся приоритетным, daily проставляется только в пробелы. Окно
+  // — 3 UTC-дня, чтобы покрыть пояса. Сравнение «сегодня»/«вчера» делается
+  // в поясе ПОЛЬЗОВАТЕЛЯ (todayU/yesterdayU уже посчитаны выше) — той же
+  // логикой, что и hourly-бакеты в ON-режиме.
+  const dailyWindowStart = DateTime.utc().minus({ days: 2 }).toISODate()
   const { data, error } = await supabaseAdmin
     .from('daily_metrics')
     .select('account_id, metric_date, clicks, cpc_usd, cost_usd, conversions, cpa')
     .eq('user_id', USER_ID)
-    .in('metric_date', [todayLegacy, yesterdayLegacy])
+    .gte('metric_date', dailyWindowStart)
 
   if (error) return res.status(500).json({ error: error.message })
 
   for (const row of (data || [])) {
-    if (hourlyAccounts.has(row.account_id)) continue // почасовые данные точнее
     const entry = ensure(row.account_id)
-    if (row.metric_date === todayLegacy) entry.today = row
-    else entry.yesterday = row
+    if      (row.metric_date === todayU     && !entry.today)     entry.today = row
+    else if (row.metric_date === yesterdayU && !entry.yesterday) entry.yesterday = row
   }
 
   return res.status(200).json({ summary, user_timezone: userTz, spend_by_user_tz: true })
