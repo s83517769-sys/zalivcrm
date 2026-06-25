@@ -57,6 +57,7 @@ const ALL_COLUMNS = [
   { key:'today_cost', label:'Сегодня $',  width:75,  align:'r' },
   { key:'yest_cost',  label:'Вчера $',    width:75,  align:'r' },
   { key:'clicks',     label:'Клики',      width:55,  align:'r' },
+  { key:'yest_clicks',label:'Клики вчера',width:75,  align:'r' },
   { key:'conv',       label:'Конверсии',  width:60,  align:'r' },
   { key:'cpa',        label:'CPA',        width:70,  align:'r' },
   { key:'card',       label:'Карта',      width:80,  align:'l' },
@@ -74,7 +75,7 @@ const COLMAP = Object.fromEntries(ALL_COLUMNS.map(c => [c.key, c]))
 const ALL_KEYS = ALL_COLUMNS.map(c => c.key)
 const DEFAULT_ORDER = [
   'zalivshik','name','status','geo','today_cost','yest_cost','cpa','last_seen',
-  'tech_status','funnel','creo','clicks','conv','card','format','launch_date','crut_date','ban_date','dis','comment','google_tag'
+  'tech_status','funnel','creo','clicks','yest_clicks','conv','card','format','launch_date','crut_date','ban_date','dis','comment','google_tag'
 ]
 const DEFAULT_VISIBLE = ['zalivshik','name','status','geo','today_cost','yest_cost','cpa','last_seen']
 const defaultVisibleMap = () => Object.fromEntries(ALL_KEYS.map(k => [k, DEFAULT_VISIBLE.includes(k)]))
@@ -118,6 +119,7 @@ function metricsOf(a, summary) {
     today_cost: +t.cost_usd || 0,
     yest_cost: +y.cost_usd || 0,
     clicks: +t.clicks || 0,
+    yest_clicks: +y.clicks || 0,
     conv: +t.conversions || 0,
     cpa: +t.cpa || 0,
   }
@@ -130,6 +132,7 @@ function sortVal(key, a, summary) {
     case 'today_cost': return mt.today_cost
     case 'yest_cost': return mt.yest_cost
     case 'clicks': return mt.clicks
+    case 'yest_clicks': return mt.yest_clicks
     case 'conv': return mt.conv
     case 'cpa': return mt.cpa
     case 'name': return a.name || ''
@@ -815,11 +818,11 @@ async function commitEdit() {
   }
   // Значение поля для копирования: обычные поля аккаунта + метрики из metricsSummary
   function copyValOf(a, field) {
-    if (field === 'today_cost' || field === 'yest_cost' || field === 'clicks' || field === 'cpa') {
+    if (field === 'today_cost' || field === 'yest_cost' || field === 'clicks' || field === 'yest_clicks' || field === 'cpa') {
       const mt = metricsOf(a, metricsSummary)
       const n = +mt[field] || 0
       if (!n) return ''
-      return field === 'clicks' ? String(n) : (Math.round(n * 100) / 100).toString()
+      return (field === 'clicks' || field === 'yest_clicks') ? String(n) : (Math.round(n * 100) / 100).toString()
     }
     return a[field] == null ? '' : String(a[field])
   }
@@ -1329,6 +1332,7 @@ async function commitEdit() {
       case 'today_cost': return <span style={{color:mt.today_cost>0?'#22d17a':'var(--t3)',fontWeight:mt.today_cost>0?500:400}}>{money(mt.today_cost)}</span>
       case 'yest_cost': return <span style={{color:mt.yest_cost>0?'var(--t2)':'var(--t3)'}}>{money(mt.yest_cost)}</span>
       case 'clicks': return <span style={{color:mt.clicks>0?'var(--t)':'var(--t3)'}}>{mt.clicks||'—'}</span>
+      case 'yest_clicks': return <span style={{color:mt.yest_clicks>0?'var(--t2)':'var(--t3)'}}>{mt.yest_clicks||'—'}</span>
       case 'conv': return <span style={{color:mt.conv>0?'#f5a623':'var(--t3)'}}>{mt.conv||'—'}</span>
       case 'cpa': return <span style={{color: marks?.cellColor?.cpa || (mt.cpa>0?'#22d17a':'var(--t3)')}}>{money(mt.cpa)}</span>
       case 'dis': return a.dis_reason ? (
@@ -1373,7 +1377,7 @@ async function commitEdit() {
           const isStatus = c.key==='status'
           const cfg = EDITABLE[c.key]
           const editing = editCell && editCell.id===a.id && editCell.key===c.key
-          const isMetric = c.key==='today_cost' || c.key==='yest_cost' || c.key==='clicks' || c.key==='cpa'
+          const isMetric = c.key==='today_cost' || c.key==='yest_cost' || c.key==='clicks' || c.key==='yest_clicks' || c.key==='cpa'
           const onCellClick = isStatus
             ? (e=>{e.stopPropagation();setStatusPopup({id:a.id,x:e.clientX,y:e.clientY})})
             : (isMetric ? (e=>{
