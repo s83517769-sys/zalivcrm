@@ -497,6 +497,12 @@ export default function Stats() {
     const t = localStorage.getItem('zcrm_theme')
     if (t) setDark(t === 'dark')
     load()
+    // Snapshot-sweep — закрывает дыру с потерей техбанов у молчащих неархивных
+    // аккаунтов. Fire-and-forget, не блокируем загрузку страницы. Сработает
+    // перед запросом статистики, чтобы свежезаписанные сегодня снимки попали
+    // в by_day. Если упадёт — статистика всё равно подтянется (просто без
+    // сегодняшних свежих снимков для молчащих).
+    api('/api/snapshot-sweep', { method: 'POST' }).catch(() => {})
     // year/month фиксированы на «сейчас» при заходе на /stats — грузим один раз
     api(`/api/stats/tech-status?year=${year}&month=${month + 1}`)
       .then(r => setTechStats(r))
