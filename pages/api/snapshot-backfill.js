@@ -39,7 +39,9 @@ export default async function handler(req, res) {
       .eq('user_id', USER_ID)
       .maybeSingle()
     if (Number.isFinite(+us?.watchdog_hours) && +us.watchdog_hours > 0) watchdogHrs = +us.watchdog_hours
-  } catch {}
+  } catch (e) {
+    console.error('[snapshot-backfill] settings load failed:', e?.message || e)
+  }
 
   // Только неархивные с непустым last_seen_at. Архивные исключены.
   const { data: accounts, error: accErr } = await supabaseAdmin
@@ -48,7 +50,10 @@ export default async function handler(req, res) {
     .eq('user_id', USER_ID)
     .eq('is_archived', false)
     .not('last_seen_at', 'is', null)
-  if (accErr) return res.status(500).json({ error: accErr.message })
+  if (accErr) {
+    console.error('[snapshot-backfill] accounts select failed:', accErr.message)
+    return res.status(500).json({ error: accErr.message })
+  }
 
   const todayISO = new Date().toISOString().split('T')[0]
   const threshold = Date.now() - watchdogHrs * 3600 * 1000
@@ -88,7 +93,10 @@ export default async function handler(req, res) {
     .gte('snapshot_date', minStart)
     .lte('snapshot_date', todayISO)
     .in('account_id', silentAccountIds)
-  if (snapErr) return res.status(500).json({ error: snapErr.message })
+  if (snapErr) {
+    console.error('[snapshot-backfill] existing-snapshots select failed:', snapErr.message)
+    return res.status(500).json({ error: snapErr.message })
+  }
 
   const existingSet = new Set(
     (existingSnapshots || []).map(s => `${s.account_id}|${s.snapshot_date}`)
@@ -128,7 +136,10 @@ export default async function handler(req, res) {
     const { error } = await supabaseAdmin
       .from('daily_tech_status')
       .upsert(rowsToInsert, { onConflict: 'account_id,snapshot_date', ignoreDuplicates: true })
-    if (error) insertError = error.message
+    if (error) {
+      insertError = error.message
+      console.error('[snapshot-backfill] daily_tech_status upsert failed:', error.message)
+    }
   }
 
   return res.status(200).json({

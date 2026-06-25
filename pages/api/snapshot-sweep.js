@@ -38,16 +38,24 @@ export default async function handler(req, res) {
       .maybeSingle()
     if (Number.isFinite(+us?.watchdog_hours) && +us.watchdog_hours > 0) watchdogHrs = +us.watchdog_hours
     if (Number.isFinite(+us?.moderation_hours) && +us.moderation_hours > 0) moderationHrs = +us.moderation_hours
-  } catch {}
+  } catch (e) {
+    console.error('[snapshot-sweep] settings load failed:', e?.message || e)
+  }
 
-  // Все неархивные аккаунты юзера. Архивные исключены — их финальный snapshot
-  // уже записан при архивации (PR #78), пересматривать не нужно.
+  // Все неархивные аккаунты юзера. SELECT * — у разных юзеров на accounts могут
+  // быть разные опциональные колонки (today_cost/today_clicks/yest_cost/yest_clicks
+  // в схеме не определены, ingest пишет их через guard `if (f in account)`).
+  // Явный перечень падал с 42703 «column does not exist» на тех инстансах,
+  // где этих колонок нет. effectiveTechStatus защищён от undefined.
   const { data: accounts, error } = await supabaseAdmin
     .from('accounts')
-    .select('id, status, tech_status, last_seen_at, crut_date, created_at, today_cost, today_clicks, yest_cost, yest_clicks')
+    .select('*')
     .eq('user_id', USER_ID)
     .eq('is_archived', false)
-  if (error) return res.status(500).json({ error: error.message })
+  if (error) {
+    console.error('[snapshot-sweep] accounts select failed:', error.message)
+    return res.status(500).json({ error: error.message })
+  }
 
   const today = new Date().toISOString().split('T')[0]
   const now = new Date().toISOString()
@@ -75,20 +83,27 @@ export default async function handler(req, res) {
     }
   }
 
-  // Двумя upsert'ами. Каждый в своём try/catch — если упадёт один (миграция
+  // Двумя upsert'ами. Каждый в своём блоке — если упадёт один (миграция
   // не выполнена, конфликт RLS), второй всё равно отработает.
+  // Ошибки также пишутся в console.error, чтобы быть видимыми в Vercel logs.
   let techError = null, manualError = null
   if (techRows.length) {
     const { error: e } = await supabaseAdmin
       .from('daily_tech_status')
       .upsert(techRows, { onConflict: 'account_id,snapshot_date' })
-    if (e) techError = e.message
+    if (e) {
+      techError = e.message
+      console.error('[snapshot-sweep] daily_tech_status upsert failed:', e.message)
+    }
   }
   if (manualRows.length) {
     const { error: e } = await supabaseAdmin
       .from('daily_manual_status')
       .upsert(manualRows, { onConflict: 'account_id,snapshot_date' })
-    if (e) manualError = e.message
+    if (e) {
+      manualError = e.message
+      console.error('[snapshot-sweep] daily_manual_status upsert failed:', e.message)
+    }
   }
 
   return res.status(200).json({
