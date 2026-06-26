@@ -567,13 +567,12 @@ export default function Stats() {
     const accs = data.accounts || []
     setAccounts(accs)
 
-    // Загружаем метрики для всех аккаунтов
-    const metricsMap = {}
-    await Promise.all(accs.map(async a => {
-      const m = await api(`/api/metrics/${a.id}`)
-      metricsMap[a.id] = m.metrics || []
-    }))
-    setMetrics(metricsMap)
+    // Метрики всех аккаунтов ОДНИМ батч-запросом (#6) вместо N запросов
+    // /api/metrics/{id}. Батч воспроизводит ту же логику слияния (daily + overlay
+    // из hourly, OFF/ON), поэтому числа идентичны — меняется только скорость.
+    // Структура { accId: [rows] } — ровно та, что ждёт memo dayTotals.
+    const mb = await api(`/api/metrics/batch?year=${year}&month=${month + 1}`)
+    setMetrics(mb.metrics || {})
     setLoading(false)
   }
 
