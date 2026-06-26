@@ -114,23 +114,29 @@ function money(v) { const n=+v||0; if(!n) return '—'; return n>=1000?'$'+Math.
 // дневного снимка в daily_tech_status, чтобы фронт и снимок никогда не
 // расходились.
 
-function metricsOf(a, summary) {
+// Денежные поля (cost_usd / cpc_usd / cpa) в metricsSummary — НАТИВНАЯ валюта
+// аккаунта. Нормализуем в USD тем же резолвером, что панель/группы и
+// analytics-burn: × rate(валюта). rate — функция (cur)=>множитель, валюта берётся
+// как m.currency || a.currency || 'USD' (зеркало панельного итога). clicks/conv
+// от валюты не зависят. CPA = cost/conv, поэтому тоже × rate.
+function metricsOf(a, summary, rate = () => 1) {
   const m = summary[a.id] || {}
   const t = m.today || {}, y = m.yesterday || {}
+  const r = rate(m.currency || a.currency || 'USD')
   return {
-    today_cost: +t.cost_usd || 0,
-    yest_cost: +y.cost_usd || 0,
+    today_cost: (+t.cost_usd || 0) * r,
+    yest_cost: (+y.cost_usd || 0) * r,
     clicks: +t.clicks || 0,
     yest_clicks: +y.clicks || 0,
-    cpc: +t.cpc_usd || 0,
-    yest_cpc: +y.cpc_usd || 0,
+    cpc: (+t.cpc_usd || 0) * r,
+    yest_cpc: (+y.cpc_usd || 0) * r,
     conv: +t.conversions || 0,
-    cpa: +t.cpa || 0,
+    cpa: (+t.cpa || 0) * r,
   }
 }
 
-function sortVal(key, a, summary) {
-  const mt = metricsOf(a, summary)
+function sortVal(key, a, summary, rate = () => 1) {
+  const mt = metricsOf(a, summary, rate)
   switch (key) {
     case 'created_at': return new Date(a.created_at).getTime() || 0
     case 'today_cost': return mt.today_cost
@@ -502,6 +508,7 @@ export default function Home() {
     setLoading(false)
     const now = new Date()
     setSyncTime(now.getHours().toString().padStart(2,'0')+':'+now.getMinutes().toString().padStart(2,'0'))
+    return accs   // свежий список — чтобы вызывающий не читал устаревшее замыкание accounts
   }
 
   async function openDrawer(acc) {
@@ -520,8 +527,9 @@ export default function Home() {
     if (!drawer) return
     setSaving(true)
     await api(`/api/accounts/${drawer.id}`, { method:'PATCH', body: JSON.stringify(editForm) })
-    await load()
-    const updated = accounts.find(a => a.id === drawer.id)
+    const accs = await load()
+    // Берём свежий аккаунт из результата load(), а не из устаревшего замыкания accounts
+    const updated = (accs || []).find(a => a.id === drawer.id)
     if (updated) setDrawer({...updated, ...editForm})
     showToast('Сохранено ✓')
     setSaving(false)
@@ -830,7 +838,7 @@ async function commitEdit() {
   // Значение поля для копирования: обычные поля аккаунта + метрики из metricsSummary
   function copyValOf(a, field) {
     if (field === 'today_cost' || field === 'yest_cost' || field === 'clicks' || field === 'yest_clicks' || field === 'cpc' || field === 'yest_cpc' || field === 'cpa') {
-      const mt = metricsOf(a, metricsSummary)
+      const mt = metricsOf(a, metricsSummary, rate)
       const n = +mt[field] || 0
       if (!n) return ''
       return (field === 'clicks' || field === 'yest_clicks') ? String(n) : (Math.round(n * 100) / 100).toString()
@@ -875,7 +883,7 @@ async function commitEdit() {
     const metricKeys = { today_cost:'today_cost', yest_cost:'yest_cost', clicks:'clicks', conv:'conv', cpa:'cpa' }
     const header = cols.map(c => esc(c.label)).join(',')
     const lines = rows.map(a => {
-      const mt = metricsOf(a, metricsSummary)
+      const mt = metricsOf(a, metricsSummary, rate)
       return cols.map(c => {
         let v
         if (c.key in metricKeys) v = mt[metricKeys[c.key]]
@@ -1094,6 +1102,11 @@ async function commitEdit() {
     return true
   })
 
+  // Резолвер курса валюты к USD (currencyRates[cur] || 1, USD=1). Определён ДО
+  // блока сортировки/панели/рендера — его используют metricsOf/sortVal для
+  // нормализации денег в USD (натив × курс), как панель и analytics-burn.
+  const rate = (cur) => currencyRates[cur] || 1
+
   const filtered = filteredBase.filter(a => {
     // catFilter — это быстрый фильтр карточек в режиме «По статусу»;
     // в режиме «По технике» аналогичную роль играет techStatusSel (см. filteredBase).
@@ -1116,8 +1129,8 @@ async function commitEdit() {
       if (ta !== tb) return ta < tb ? -1 : 1
       return String(a.id).localeCompare(String(b.id))
     }
-    const va = sortVal(sort.key, a, metricsSummary)
-    const vb = sortVal(sort.key, b, metricsSummary)
+    const va = sortVal(sort.key, a, metricsSummary, rate)
+    const vb = sortVal(sort.key, b, metricsSummary, rate)
     let r
     if (typeof va === 'number' && typeof vb === 'number') r = va - vb
     else r = String(va).localeCompare(String(vb))
@@ -1128,7 +1141,6 @@ async function commitEdit() {
   // Группы (active/problem/terminal/noSignal/techCounts) считаются по когорте —
   // чтобы карточки не схлопывались до 0 при выборе одной группы. Спенд/total —
   // по filteredBase: это про то, что реально показано в таблице сейчас.
-  const rate = (cur) => currencyRates[cur] || 1
   const panel = (() => {
     let active = 0, problem = 0, terminal = 0, noSignal = 0
     const techCounts = {}
@@ -1391,7 +1403,7 @@ async function commitEdit() {
   const draggedSet = new Set(dragFromIds)
 
   function renderRow(a) {
-    const mt = metricsOf(a, metricsSummary)
+    const mt = metricsOf(a, metricsSummary, rate)
     const marks = ruleHits(a)
     const rOver = rowOver && rowOver.id===a.id
     const trStyle = {
