@@ -472,6 +472,11 @@ export default function Home() {
     if (sData?.settings?.currency_rates && Object.keys(sData.settings.currency_rates).length) {
       setCurrencyRates({ USD:1, ...sData.settings.currency_rates })
     }
+    // Живой FX: фоновое автообновление курсов (сервер троттлит — раз в день).
+    // Fire-and-forget, загрузку не блокирует; при успехе обновляем курсы в UI.
+    api('/api/fx/refresh', { method:'POST', body: JSON.stringify({ force:false }) })
+      .then(r => { if (r?.rates) setCurrencyRates({ USD:1, ...r.rates }) })
+      .catch(()=>{})
     if (Array.isArray(sData?.settings?.row_rules)) {
       setRowRules(sData.settings.row_rules)
     }
