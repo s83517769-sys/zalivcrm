@@ -1,4 +1,4 @@
-import { useEffect, useState, Fragment } from 'react'
+import { useEffect, useState, useMemo, Fragment } from 'react'
 import Head from 'next/head'
 import Link from 'next/link'
 import { api } from '../lib/api'
@@ -474,6 +474,7 @@ export default function Stats() {
   const [techStats, setTechStats] = useState(null) // { by_day:{}, first_snapshot:null }
   const [manualStats, setManualStats] = useState(null) // зеркало для ручных снимков
   const [customStatuses, setCustomStatuses] = useState([]) // палитра ручных статусов из настроек
+  const [currencyRates, setCurrencyRates] = useState({ USD: 1 }) // живой FX из настроек — для USD-нормализации cost
   // Для расчёта effectiveTechStatus на клиенте (режим «Текущее» в круговой)
   const [watchdogHours, setWatchdogHours] = useState(2)
   const [moderationHours, setModerationHours] = useState(12)
@@ -516,6 +517,9 @@ export default function Stats() {
     api('/api/users/settings')
       .then(r => {
         if (Array.isArray(r?.settings?.custom_statuses)) setCustomStatuses(r.settings.custom_statuses)
+        if (r?.settings?.currency_rates && Object.keys(r.settings.currency_rates).length) {
+          setCurrencyRates({ USD: 1, ...r.settings.currency_rates })
+        }
         const wh = +r?.settings?.watchdog_hours
         const mh = +r?.settings?.moderation_hours
         if (Number.isFinite(wh) && wh > 0) setWatchdogHours(wh)
@@ -567,35 +571,38 @@ export default function Stats() {
     }).length
   }
 
-  function getCostForDay(day) {
-    const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`
-    let total = 0
-    Object.values(metrics).forEach(accMetrics => {
-      const m = accMetrics.find(m => m.metric_date === dateStr)
-      if (m) total += +m.cost_usd || 0
-    })
-    return total
-  }
+  // Курс валюты к USD (тот же резолвер, что на главной и в analytics-burn:
+  // currencyRates[cur] || 1, USD=1). cost_usd в daily_metrics — НАТИВНАЯ валюта,
+  // поэтому суммировать дневной cost можно только после × rate(валюта аккаунта).
+  const rate = (cur) => currencyRates[cur] || 1
 
-  function getClicksForDay(day) {
-    const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`
-    let total = 0
-    Object.values(metrics).forEach(accMetrics => {
-      const m = accMetrics.find(m => m.metric_date === dateStr)
-      if (m) total += +m.clicks || 0
-    })
-    return total
-  }
+  // Один проход по всем метрикам → карта { 'YYYY-MM-DD': {costUSD, clicks, conv} }.
+  // cost нормализован в USD НА УРОВНЕ АККАУНТА (у каждого своя валюта) перед
+  // суммированием — иначе мультивалютные суммы складывали бы натив разных валют.
+  // Решает и корректность (#1), и перф (#7): раньше getCostForDay/Clicks/Conv
+  // пересчитывались каждый рендер и звались повторно (CPA/CPC снова дёргали cost).
+  const dayTotals = useMemo(() => {
+    const curOf = {}
+    for (const a of accounts) curOf[a.id] = a.currency || 'USD'
+    const map = {}
+    for (const [accId, accMetrics] of Object.entries(metrics)) {
+      const r = rate(curOf[accId] || 'USD')
+      for (const m of (accMetrics || [])) {
+        const d = m.metric_date
+        if (!d) continue
+        const bucket = map[d] || (map[d] = { costUSD: 0, clicks: 0, conv: 0 })
+        bucket.costUSD += (+m.cost_usd || 0) * r   // натив × курс = USD
+        bucket.clicks  += +m.clicks || 0
+        bucket.conv    += +m.conversions || 0
+      }
+    }
+    return map
+  }, [metrics, accounts, currencyRates])
 
-  function getConvForDay(day) {
-    const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`
-    let total = 0
-    Object.values(metrics).forEach(accMetrics => {
-      const m = accMetrics.find(m => m.metric_date === dateStr)
-      if (m) total += +m.conversions || 0
-    })
-    return total
-  }
+  const dateStrOf = (day) => `${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`
+  function getCostForDay(day)   { return dayTotals[dateStrOf(day)]?.costUSD || 0 }  // уже в USD
+  function getClicksForDay(day) { return dayTotals[dateStrOf(day)]?.clicks  || 0 }
+  function getConvForDay(day)   { return dayTotals[dateStrOf(day)]?.conv    || 0 }
 
   // Группы заливщиков
   const zalivshiki = [...new Set(accounts.map(a => a.zalivshik).filter(Boolean))]
