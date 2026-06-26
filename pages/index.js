@@ -106,7 +106,8 @@ const EMPTY_FORM = {
   launch_date:'', crut_date:'', ban_date:'', ban_reason:''
 }
 
-function money(v) { const n=+v||0; if(!n) return '—'; return n>=1000?'$'+Math.round(n).toLocaleString('ru'):'$'+n.toFixed(0) }
+// <1 показываем с центами ($0.50), 1..999 — целыми, ≥1000 — с разделителем тысяч.
+function money(v) { const n=+v||0; if(!n) return '—'; if(n>=1000) return '$'+Math.round(n).toLocaleString('ru'); return n<1?'$'+n.toFixed(2):'$'+n.toFixed(0) }
 
 // TECH_STATUS_MAP / techStatusInfo / canonTechStatus / hadAnyActivity /
 // isModerationWindow / effectiveTechStatus — единый источник правды в
@@ -326,6 +327,21 @@ export default function Home() {
   }, [theme])
 
   useEffect(() => { document.body.className = dark ? 'dark' : 'light' }, [dark])
+
+  // Кросс-полуночная актуальность: «сегодня» в effectiveTechStatus/watchdog
+  // считается из Date.now() на каждый рендер, но рендер не происходит сам по
+  // себе. Раз в минуту (и при возврате фокуса) проверяем смену календарного дня
+  // и форсим ре-рендер — без перезагрузки данных. setDateTick меняется только
+  // когда дата реально сменилась, так что лишних ре-рендеров нет.
+  const [, setDateTick] = useState(0)
+  useEffect(() => {
+    let last = new Date().toDateString()
+    const check = () => { const d = new Date().toDateString(); if (d !== last) { last = d; setDateTick(t => t + 1) } }
+    const iv = setInterval(check, 60000)
+    const onVis = () => { if (!document.hidden) check() }
+    document.addEventListener('visibilitychange', onVis)
+    return () => { clearInterval(iv); document.removeEventListener('visibilitychange', onVis) }
+  }, [])
 
   // Автоскролл .tbl-wrap при drag&drop СТРОК (rowDrag), не колонок.
   // Активен только пока тащим строку и курсор у верхнего/нижнего края области таблицы

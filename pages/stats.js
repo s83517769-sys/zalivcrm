@@ -475,6 +475,7 @@ export default function Stats() {
   const [manualStats, setManualStats] = useState(null) // зеркало для ручных снимков
   const [customStatuses, setCustomStatuses] = useState([]) // палитра ручных статусов из настроек
   const [currencyRates, setCurrencyRates] = useState({ USD: 1 }) // живой FX из настроек — для USD-нормализации cost
+  const [metricsSummary, setMetricsSummary] = useState({}) // тот же источник, что на главной — для согласованного «Удалить» (#5)
   // Для расчёта effectiveTechStatus на клиенте (режим «Текущее» в круговой)
   const [watchdogHours, setWatchdogHours] = useState(2)
   const [moderationHours, setModerationHours] = useState(12)
@@ -504,6 +505,10 @@ export default function Stats() {
     // в by_day. Если упадёт — статистика всё равно подтянется (просто без
     // сегодняшних свежих снимков для молчащих).
     api('/api/snapshot-sweep', { method: 'POST' }).catch(() => {})
+    // Сводка спенда today/yesterday — ТОТ ЖЕ источник, что на главной. Нужен,
+    // чтобы критерий «Удалить» (#5) совпадал с главной (оба по metrics-summary),
+    // а не считался по daily_metrics с другим определением «сегодня/вчера».
+    api('/api/metrics-summary').then(r => setMetricsSummary(r.summary || {})).catch(() => {})
     // year/month фиксированы на «сейчас» при заходе на /stats — грузим один раз
     api(`/api/stats/tech-status?year=${year}&month=${month + 1}`)
       .then(r => setTechStats(r))
@@ -531,6 +536,20 @@ export default function Stats() {
   useEffect(() => {
     document.body.className = dark ? 'dark' : 'light'
   }, [dark])
+
+  // Кросс-полуночная актуальность: year/month/today/days считаются из new Date()
+  // на каждый рендер. Раз в минуту (и при возврате фокуса) проверяем смену дня
+  // и форсим ре-рендер, чтобы «сегодня» и подсветка обновились без ручной
+  // перезагрузки. Данные за месяц не перезагружаем (лишнего трафика нет).
+  const [, setDateTick] = useState(0)
+  useEffect(() => {
+    let last = new Date().toDateString()
+    const check = () => { const d = new Date().toDateString(); if (d !== last) { last = d; setDateTick(t => t + 1) } }
+    const iv = setInterval(check, 60000)
+    const onVis = () => { if (!document.hidden) check() }
+    document.addEventListener('visibilitychange', onVis)
+    return () => { clearInterval(iv); document.removeEventListener('visibilitychange', onVis) }
+  }, [])
 
   // Грузим аналитику при заходе на вкладку или смене режима Ручные/Технические.
   useEffect(() => {
@@ -607,15 +626,6 @@ export default function Stats() {
   // Группы заливщиков
   const zalivshiki = [...new Set(accounts.map(a => a.zalivshik).filter(Boolean))]
 
-  function getZalivshikCountForDay(day, zalivshik, status) {
-    const date = new Date(year, month, day)
-    return accounts.filter(a => {
-      if (a.zalivshik !== zalivshik) return false
-      if (status && a.status !== status) return false
-      const created = new Date(a.created_at)
-      return created <= date
-    }).length
-  }
 
   const totalCost = days.reduce((s, d) => s + getCostForDay(d), 0)
   const totalClicks = days.reduce((s, d) => s + getClicksForDay(d), 0)
@@ -626,20 +636,18 @@ export default function Stats() {
   // текущих аккаунтов, плюс палитра custom_statuses + дефолтный STATUSES.
   // Пустые (нигде не встретились) — не показываем.
   // «Удалить» — клиентская группа: забаненный без спенда сегодня и вчера.
-  // Зеркало логики главной (PR #93), но источник — metrics[a.id] (массив строк
-  // daily_metrics с пагинацией по hourly за 92 дня из /api/metrics/[accountId]).
-  // В снимки daily_tech_status / в аналитику /api/stats/* это НЕ просачивается —
-  // для таких аккаунтов сервер по-прежнему пишет 'Бан'.
+  // Источник — metricsSummary (today/yesterday от /api/metrics-summary) — ТОТ ЖЕ,
+  // что на главной (index.js isDeleteCandidate), чтобы один аккаунт одинаково
+  // классифицировался на обеих страницах (#5). Раньше /stats считал по
+  // daily_metrics с другим определением «сегодня/вчера» (календарная дата
+  // браузера) → рассинхрон около полуночи. В снимки daily_tech_status / в
+  // аналитику /api/stats/* «Удалить» по-прежнему НЕ просачивается — там 'Бан'.
   function isDeleteCandidate(a) {
     if (effectiveTechStatus(a, watchdogHours, moderationHours) !== 'Бан') return false
-    const accMetrics = metrics[a.id] || []
-    const now = new Date()
-    const todayStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`
-    const y = new Date(Date.now() - 86400000)
-    const yestStr  = `${y.getFullYear()}-${String(y.getMonth()+1).padStart(2,'0')}-${String(y.getDate()).padStart(2,'0')}`
-    const todayRow = accMetrics.find(m => m.metric_date === todayStr)
-    const yestRow  = accMetrics.find(m => m.metric_date === yestStr)
-    return !(+todayRow?.cost_usd > 0) && !(+yestRow?.cost_usd > 0)
+    const m = metricsSummary[a.id]
+    const today = +m?.today?.cost_usd || 0
+    const yest  = +m?.yesterday?.cost_usd || 0
+    return today === 0 && yest === 0
   }
   function sidebarTechOf(a) {
     if (isDeleteCandidate(a)) return 'Удалить'
@@ -897,8 +905,10 @@ export default function Stats() {
 
                     {activeManualStatuses.map(name => {
                       const {color, bg} = colorOfManualStatus(name)
-                      const todayStr = `${year}-${String(month+1).padStart(2,'0')}-${String(today).padStart(2,'0')}`
-                      const nowCnt = manualStats?.by_day?.[todayStr]?.[name] || accounts.filter(a=>a.status===name).length
+                      // «Сейчас» — живой клиентский счёт (как у тех-таблицы, #9): актуальнее
+                      // снимка, который пишется раз в день. Историческая часть строки (дни
+                      // месяца ниже) остаётся из снимков by_day — её не трогаем.
+                      const nowCnt = accounts.filter(a=>a.status===name).length
                       return (
                         <tr key={name}>
                           <td>
@@ -1176,32 +1186,38 @@ export default function Stats() {
             />
           )}
 
-          {view === 'zalivshik' && (
+          {view === 'zalivshik' && (<>
+            {/* Честный срез ТЕКУЩЕГО статуса по заливщикам. Раньше тут были
+                колонки по дням, но они показывали сегодняшний статус задним
+                числом (проекция a.status по created_at) — это фейковая «история».
+                Реальную историю по заливщику из снимков собрать нельзя: эндпоинты
+                /api/stats/* агрегируют daily_*_status БЕЗ account_id, поэтому
+                разрез по заливщику недоступен (а трогать снимки/ingest нельзя).
+                Поэтому показываем только «Сейчас» — без иллюзии истории. */}
+            <div className="hint" style={{marginBottom:10}}>
+              Текущий статус аккаунтов по заливщикам (на сейчас). Историю по дням см. во вкладке «По статусам».
+            </div>
             <table>
               <thead>
                 <tr>
                   <th>Заливщик / Статус</th>
-                  {days.map(d => <DayTh key={d} d={d} today={today}/>)}
                   <th>Сейчас</th>
                 </tr>
               </thead>
               <tbody>
                 {zalivshiki.map(z => {
-                  // Статусы строим из реальных значений a.status у аккаунтов
-                  // этого заливщика — кастомные статусы из настроек пользователя
-                  // тоже подхватятся (раньше фильтр шёл по хардкод-STATUSES и их
-                  // отрезал). Цвет/фон — через colorOfManualStatus, который
-                  // учитывает customStatuses и встроенный STATUSES.
+                  // Статусы — из реальных значений a.status у аккаунтов заливщика
+                  // (кастомные из настроек тоже подхватятся). Цвет — colorOfManualStatus.
                   const zStatuses = [...new Set(
                     accounts.filter(a => a.zalivshik === z && a.status).map(a => a.status)
                   )]
                   return (
                     <Fragment key={z}>
                       <tr className="section-header">
-                        <td colSpan={daysInMonth+2}>👤 {z}</td>
+                        <td colSpan={2}>👤 {z}</td>
                       </tr>
                       {zStatuses.map(name => {
-                        const {color, bg} = colorOfManualStatus(name)
+                        const {color} = colorOfManualStatus(name)
                         return (
                           <tr key={z+'|'+name}>
                             <td style={{paddingLeft:20}}>
@@ -1210,17 +1226,6 @@ export default function Stats() {
                                 {name}
                               </span>
                             </td>
-                            {days.map(d => {
-                              const cnt = getZalivshikCountForDay(d, z, name)
-                              return (
-                                <td key={d} className={d===today?'today-col':''}>
-                                  {cnt > 0
-                                    ? <span className="cell-val" style={{background:bg,color}}>{cnt}</span>
-                                    : <span className="cell-zero">—</span>
-                                  }
-                                </td>
-                              )
-                            })}
                             <td style={{color}}>
                               {accounts.filter(a=>a.zalivshik===z&&a.status===name).length||'—'}
                             </td>
@@ -1232,7 +1237,7 @@ export default function Stats() {
                 })}
               </tbody>
             </table>
-          )}
+          </>)}
         </div>
       </div>
     </>
