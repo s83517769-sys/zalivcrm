@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Fragment } from 'react'
 import Head from 'next/head'
 import Link from 'next/link'
 import { api } from '../lib/api'
@@ -618,6 +618,37 @@ export default function Stats() {
   // Активные статусы для режима «Ручные» — динамически из РЕАЛЬНЫХ снимков и
   // текущих аккаунтов, плюс палитра custom_statuses + дефолтный STATUSES.
   // Пустые (нигде не встретились) — не показываем.
+  // «Удалить» — клиентская группа: забаненный без спенда сегодня и вчера.
+  // Зеркало логики главной (PR #93), но источник — metrics[a.id] (массив строк
+  // daily_metrics с пагинацией по hourly за 92 дня из /api/metrics/[accountId]).
+  // В снимки daily_tech_status / в аналитику /api/stats/* это НЕ просачивается —
+  // для таких аккаунтов сервер по-прежнему пишет 'Бан'.
+  function isDeleteCandidate(a) {
+    if (effectiveTechStatus(a, watchdogHours, moderationHours) !== 'Бан') return false
+    const accMetrics = metrics[a.id] || []
+    const now = new Date()
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`
+    const y = new Date(Date.now() - 86400000)
+    const yestStr  = `${y.getFullYear()}-${String(y.getMonth()+1).padStart(2,'0')}-${String(y.getDate()).padStart(2,'0')}`
+    const todayRow = accMetrics.find(m => m.metric_date === todayStr)
+    const yestRow  = accMetrics.find(m => m.metric_date === yestStr)
+    return !(+todayRow?.cost_usd > 0) && !(+yestRow?.cost_usd > 0)
+  }
+  function sidebarTechOf(a) {
+    if (isDeleteCandidate(a)) return 'Удалить'
+    return effectiveTechStatus(a, watchdogHours, moderationHours)
+  }
+  // Текущие клиентские счётчики по тех-группам (для столбца «Сейчас» и donut-now).
+  // Один аккаунт = одна группа, отгоревший «Бан» уходит в 'Удалить', не дублируется.
+  const currentTechCounts = (() => {
+    const out = {}
+    for (const a of accounts) {
+      const k = sidebarTechOf(a)
+      if (k) out[k] = (out[k] || 0) + 1
+    }
+    return out
+  })()
+
   function colorOfManualStatus(name) {
     const c = customStatuses.find(s => s.name === name)
     if (c?.color) return { color: c.color, bg: c.bg || `${c.color}1f` }
@@ -659,6 +690,9 @@ export default function Stats() {
         for (const n of Object.keys(d)) names.add(n)
       }
     }
+    // Клиентская группа 'Удалить' в снимках не существует — добавляем явно,
+    // если есть текущие кандидаты. Порядок ниже ставит её в конец.
+    if ((currentTechCounts['Удалить'] || 0) > 0) names.add('Удалить')
     const sorted = [...names].sort((a, b) => {
       const ia = TECH_STATUSES_FOR_STATS.indexOf(a)
       const ib = TECH_STATUSES_FOR_STATS.indexOf(b)
@@ -668,9 +702,13 @@ export default function Stats() {
       return ia - ib
     })
     // Скрываем строки, где total за месяц = 0 (Сейчас тоже учитываем).
+    // Для 'Удалить' total в снимках всегда 0 (его туда не пишем) — оставляем
+    // строку, если есть текущие кандидаты, чтобы «Сейчас» был не пуст.
     return sorted.filter(ts => {
+      if (ts === 'Удалить') return (currentTechCounts['Удалить'] || 0) > 0
       let total = 0
       if (techStats?.by_day) for (const d of Object.values(techStats.by_day)) total += d[ts] || 0
+      if (ts === 'Бан') total += currentTechCounts['Бан'] || 0
       return total > 0
     })
   })()
@@ -783,7 +821,10 @@ export default function Stats() {
           let krutit = 0, ban = 0
           for (const a of accounts) {
             if (isTech) {
-              const eff = effectiveTechStatus(a, watchdogHours, moderationHours)
+              // sidebarTechOf: отгоревший Бан (нет спенда сегодня/вчера) уходит
+              // в 'Удалить' и не считается тут — синхронно с главной (PR #93)
+              // и с тех-таблицей ниже.
+              const eff = sidebarTechOf(a)
               if (eff === 'Крутит') krutit++
               else if (eff === 'Бан') ban++
             } else {
@@ -892,9 +933,12 @@ export default function Stats() {
                       const info = TECH_STATUS_MAP[ts]
                       const color = info?.c || '#6b7280'
                       const bg = `${color}1f` // ~12% alpha hex
-                      // Итого по дню сегодня — берём агрегат за today, если есть
-                      const todayStr = `${year}-${String(month+1).padStart(2,'0')}-${String(today).padStart(2,'0')}`
-                      const nowCnt = techStats?.by_day?.[todayStr]?.[ts] || 0
+                      // «Сейчас» считаем КЛИЕНТСКИ через sidebarTechOf — иначе
+                      // отгоревшие баны застряли бы в строке «Бан» (снимок их
+                      // пишет именно так), не уезжая в «Удалить». Историческая
+                      // часть строки (дни месяца ниже) остаётся по снимкам — она
+                      // и должна показывать «Бан», аналитика банов не страдает.
+                      const nowCnt = currentTechCounts[ts] || 0
                       return (
                         <tr key={ts}>
                           <td>
@@ -982,7 +1026,7 @@ export default function Stats() {
                   // 'now' — считаем по активным аккаунтам
                   for (const a of accounts) {
                     let name = ''
-                    if (statusKind === 'tech') name = effectiveTechStatus(a, watchdogHours, moderationHours)
+                    if (statusKind === 'tech') name = sidebarTechOf(a)
                     else name = a.status
                     if (name) counts[name] = (counts[name] || 0) + 1
                   }
@@ -1135,37 +1179,50 @@ export default function Stats() {
                 </tr>
               </thead>
               <tbody>
-                {zalivshiki.map(z => (
-                  <>
-                    <tr key={z} className="section-header">
-                      <td colSpan={daysInMonth+2}>👤 {z}</td>
-                    </tr>
-                    {STATUSES.filter(s => accounts.some(a => a.zalivshik === z && a.status === s.key)).map(s => (
-                      <tr key={z+s.key}>
-                        <td style={{paddingLeft:20}}>
-                          <span className="status-label">
-                            <span className="status-dot" style={{background:s.color}}/>
-                            {s.key}
-                          </span>
-                        </td>
-                        {days.map(d => {
-                          const cnt = getZalivshikCountForDay(d, z, s.key)
-                          return (
-                            <td key={d} className={d===today?'today-col':''}>
-                              {cnt > 0
-                                ? <span className="cell-val" style={{background:s.bg,color:s.color}}>{cnt}</span>
-                                : <span className="cell-zero">—</span>
-                              }
-                            </td>
-                          )
-                        })}
-                        <td style={{color:s.color}}>
-                          {accounts.filter(a=>a.zalivshik===z&&a.status===s.key).length||'—'}
-                        </td>
+                {zalivshiki.map(z => {
+                  // Статусы строим из реальных значений a.status у аккаунтов
+                  // этого заливщика — кастомные статусы из настроек пользователя
+                  // тоже подхватятся (раньше фильтр шёл по хардкод-STATUSES и их
+                  // отрезал). Цвет/фон — через colorOfManualStatus, который
+                  // учитывает customStatuses и встроенный STATUSES.
+                  const zStatuses = [...new Set(
+                    accounts.filter(a => a.zalivshik === z && a.status).map(a => a.status)
+                  )]
+                  return (
+                    <Fragment key={z}>
+                      <tr className="section-header">
+                        <td colSpan={daysInMonth+2}>👤 {z}</td>
                       </tr>
-                    ))}
-                  </>
-                ))}
+                      {zStatuses.map(name => {
+                        const {color, bg} = colorOfManualStatus(name)
+                        return (
+                          <tr key={z+'|'+name}>
+                            <td style={{paddingLeft:20}}>
+                              <span className="status-label">
+                                <span className="status-dot" style={{background:color}}/>
+                                {name}
+                              </span>
+                            </td>
+                            {days.map(d => {
+                              const cnt = getZalivshikCountForDay(d, z, name)
+                              return (
+                                <td key={d} className={d===today?'today-col':''}>
+                                  {cnt > 0
+                                    ? <span className="cell-val" style={{background:bg,color}}>{cnt}</span>
+                                    : <span className="cell-zero">—</span>
+                                  }
+                                </td>
+                              )
+                            })}
+                            <td style={{color}}>
+                              {accounts.filter(a=>a.zalivshik===z&&a.status===name).length||'—'}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </Fragment>
+                  )
+                })}
               </tbody>
             </table>
           )}
