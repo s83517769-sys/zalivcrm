@@ -14,7 +14,7 @@ const WRITABLE = [
   'custom_statuses', 'custom_groups', 'watchdog_hours', 'moderation_hours',
   'archive_autodelete_days', 'column_config', 'row_rules', 'currency_rates',
   'ui_density', 'ui_theme', 'status_automations', 'default_sort',
-  'user_timezone', 'spend_by_user_tz',
+  'user_timezone', 'spend_by_user_tz', 'fx_meta',
 ]
 
 function notEmpty(v) {
@@ -58,6 +58,8 @@ export default async function handler(req, res) {
         user_timezone: (row?.user_timezone || 'Asia/Nicosia') === 'Europe/Nicosia' ? 'Asia/Nicosia' : (row?.user_timezone || 'Asia/Nicosia'),
         // По умолчанию ВЫКЛ: показываем «как в Google Ads» (легаси-поля today_/yest_ из accounts).
         spend_by_user_tz: row?.spend_by_user_tz === true,
+        // Метаданные авто-курсов (дата обновления, источник, ручные оверрайды).
+        fx_meta: (row?.fx_meta && typeof row.fx_meta === 'object') ? row.fx_meta : {},
       },
     })
   }

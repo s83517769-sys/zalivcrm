@@ -33,6 +33,8 @@ export default function Settings() {
   const [rowRules, setRowRules] = useState([])
   const [rates, setRates] = useState({ USD:1 })
   const [newRate, setNewRate] = useState({ cur:'', val:'' })
+  const [fxMeta, setFxMeta] = useState({})   // { updated_at, source, fx_date, manual:[] }
+  const [fxBusy, setFxBusy] = useState(false)
 
   const [newStatus, setNewStatus] = useState({ name:'', color:'#5b6ef5', category:'active' })
   const [newGroup, setNewGroup] = useState({ prefix:'', color:'#5b6ef5' })
@@ -61,10 +63,35 @@ export default function Settings() {
       setArchiveAutodeleteDays(s.settings.archive_autodelete_days ?? 30)
       setRowRules(s.settings.row_rules || [])
       setRates({ USD:1, ...(s.settings.currency_rates || {}) })
+      setFxMeta(s.settings.fx_meta || {})
       if (s.settings.user_timezone) setUserTz(s.settings.user_timezone)
       setSpendByUserTz(s.settings.spend_by_user_tz === true)
     }
     setAccounts(a.accounts || [])
+    // Фоновое автообновление курсов (троттлится на сервере — раз в день).
+    // Fire-and-forget, загрузку страницы не блокирует.
+    refreshFx(false)
+  }
+
+  // ── Живой FX: автоподтяжка курсов ──
+  async function refreshFx(force) {
+    if (fxBusy) return
+    setFxBusy(true)
+    try {
+      const r = await api('/api/fx/refresh', { method:'POST', body: JSON.stringify({ force: !!force }) })
+      if (r?.rates) setRates({ USD:1, ...r.rates })
+      if (r?.updated_at) setFxMeta(m => ({ ...m, updated_at: r.updated_at, source: r.source, fx_date: r.fx_date }))
+      if (force) {
+        if (r?.ok && !r?.skipped) showToast('Курсы обновлены ✓')
+        else if (r?.skipped) showToast('Курсы уже свежие (обновляются раз в день)')
+        else if (r?.reason === 'fx_unavailable') showToast('Источник курсов недоступен, попробуй позже')
+        else showToast('Не удалось обновить курсы')
+      }
+    } catch {
+      if (force) showToast('Не удалось обновить курсы')
+    } finally {
+      setFxBusy(false)
+    }
   }
 
   // ── Правила подсветки ──
@@ -92,9 +119,18 @@ export default function Settings() {
     setRates(next)
     return saveSettings({ currency_rates: next })
   }
+  // Ручной оверрайд: помечаем код как «ручной», чтобы авто-обновление его не трогало.
+  function metaWithManual(cur) {
+    const manual = Array.isArray(fxMeta.manual) ? fxMeta.manual : []
+    if (manual.includes(cur)) return fxMeta
+    return { ...fxMeta, manual: [...manual, cur] }
+  }
   async function updateRate(cur, val) {
     const next = { ...rates, [cur]: parseFloat(val) || 0 }
-    await persistRates(next)
+    setRates(next)
+    const nextMeta = metaWithManual(cur)
+    setFxMeta(nextMeta)
+    await saveSettings({ currency_rates: next, fx_meta: nextMeta })
   }
   async function addRate() {
     const cur = newRate.cur.trim().toUpperCase()
@@ -102,12 +138,20 @@ export default function Settings() {
     if (!cur) return showToast('Введи код валюты')
     if (rates[cur] !== undefined) return showToast('Такая валюта уже есть')
     if (!val || val <= 0) return showToast('Введи курс к USD')
-    if (await persistRates({ ...rates, [cur]: val })) { setNewRate({ cur:'', val:'' }); showToast('Валюта добавлена ✓') }
+    const next = { ...rates, [cur]: val }
+    const nextMeta = metaWithManual(cur)
+    setRates(next); setFxMeta(nextMeta)
+    if (await saveSettings({ currency_rates: next, fx_meta: nextMeta })) {
+      setNewRate({ cur:'', val:'' }); showToast('Валюта добавлена ✓ (ручной курс)')
+    }
   }
   async function delRate(cur) {
     if (cur === 'USD') return showToast('USD удалить нельзя')
     const next = { ...rates }; delete next[cur]
-    if (await persistRates(next)) showToast('Валюта удалена')
+    const manual = (Array.isArray(fxMeta.manual) ? fxMeta.manual : []).filter(c => c !== cur)
+    const nextMeta = { ...fxMeta, manual }
+    setRates(next); setFxMeta(nextMeta)
+    if (await saveSettings({ currency_rates: next, fx_meta: nextMeta })) showToast('Валюта удалена')
   }
 
   function showToast(msg) { setToast(msg); setTimeout(() => setToast(''), 2200) }
@@ -453,18 +497,35 @@ export default function Settings() {
         {/* КУРСЫ ВАЛЮТ */}
         <div className="card">
           <h2>💱 Курсы валют к USD</h2>
-          <div className="hint" style={{marginBottom:10}}>Спенд в панели аккаунтов нормализуется в USD: нативная сумма × курс. USD всегда 1.</div>
+          <div className="hint" style={{marginBottom:10}}>Спенд в панели аккаунтов нормализуется в USD: нативная сумма × курс. USD всегда 1. Курсы подтягиваются автоматически (ЕЦБ, раз в день); можно задать любой курс вручную — авто-обновление ручные не трогает.</div>
+          <div className="row" style={{alignItems:'center',gap:10,marginBottom:12}}>
+            <button className="btn btn-acc" onClick={()=>refreshFx(true)} disabled={fxBusy}>
+              {fxBusy ? 'Обновляю…' : '↻ Обновить курсы сейчас'}
+            </button>
+            <span className="hint" style={{margin:0}}>
+              {fxMeta?.updated_at
+                ? `Обновлено: ${new Date(fxMeta.updated_at).toLocaleString('ru',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'})}${fxMeta.source?` · ${fxMeta.source==='er-api'?'er-api':'ЕЦБ'}`:''}`
+                : 'Ещё не обновлялись автоматически'}
+            </span>
+          </div>
           <div className="st-list">
-            {Object.entries(rates).sort((a,b)=>a[0].localeCompare(b[0])).map(([cur,val])=>(
+            {Object.entries(rates).sort((a,b)=>a[0].localeCompare(b[0])).map(([cur,val])=>{
+              const isManual = Array.isArray(fxMeta.manual) && fxMeta.manual.includes(cur)
+              return (
               <div key={cur} className="st-row">
                 <span className="rate-cur">{cur}</span>
                 <input className="rate-val" type="number" step="0.0001" value={val} disabled={cur==='USD'}
                        onChange={e=>setRates({...rates,[cur]:e.target.value})}
                        onBlur={e=>cur!=='USD' && updateRate(cur,e.target.value)}/>
                 <span className="rate-eq">× нативная = USD</span>
+                {cur!=='USD' && (
+                  <span className="hint" style={{margin:0,minWidth:48,fontSize:10,color:isManual?'#f5a623':'var(--t3)'}}>
+                    {isManual ? 'ручной' : 'авто'}
+                  </span>
+                )}
                 <button className="st-del" title={cur==='USD'?'USD удалить нельзя':'Удалить'} disabled={cur==='USD'} onClick={()=>delRate(cur)}>×</button>
               </div>
-            ))}
+            )})}
           </div>
           <div className="row" style={{marginTop:12}}>
             <div className="fi" style={{maxWidth:110,marginBottom:0}}>
