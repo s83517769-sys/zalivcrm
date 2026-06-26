@@ -1055,6 +1055,25 @@ async function commitEdit() {
   })
 
   // Базовый набор — когорта + активный фильтр группы (status или tech).
+  // Кандидат в «Удалить»: забаненный (effectiveTechStatus === 'Бан') без спенда
+  // за сегодня И за вчера. Чисто клиентская группа сайдбара — в snapshot'ы
+  // (daily_tech_status) и в /stats не утекает: для таких аккаунтов сервер
+  // по-прежнему пишет 'Бан', аналитика банов остаётся корректной.
+  function isDeleteCandidate(a) {
+    if (effectiveTechStatus(a, watchdogHours, moderationHours) !== 'Бан') return false
+    const m = metricsSummary[a.id]
+    const today = +m?.today?.cost_usd || 0
+    const yest  = +m?.yesterday?.cost_usd || 0
+    return today === 0 && yest === 0
+  }
+  // Лейбл группы в сайдбаре с учётом «Удалить»: возвращает 'Удалить' для
+  // отгоревших, иначе — обычный effectiveTechStatus. '' для аккаунтов без
+  // скрипта (как раньше — обрабатывается отдельно как «Новые»).
+  function sidebarTechOf(a) {
+    if (isDeleteCandidate(a)) return 'Удалить'
+    return effectiveTechStatus(a, watchdogHours, moderationHours)
+  }
+
   const filteredBase = cohort.filter(a => {
     if (filterMode === 'status') {
       if (statusSel.length && !statusSel.includes(a.status)) return false
@@ -1062,8 +1081,8 @@ async function commitEdit() {
       if (techStatusSel.length) {
         // Пустой eff (скрипт не присылал) попадает в псевдогруппу «Новые»
         // именно для целей фильтрации сайдбара. Если пользователь выбрал
-        // конкретный тех-статус (Крутит/Бан/…), такие аккаунты исключаются.
-        const eff = effectiveTechStatus(a, watchdogHours, moderationHours) || 'Новые'
+        // конкретный тех-статус (Крутит/Бан/Удалить/…), такие аккаунты исключаются.
+        const eff = sidebarTechOf(a) || 'Новые'
         if (!techStatusSel.includes(eff)) return false
       }
     }
@@ -1114,7 +1133,10 @@ async function commitEdit() {
       else if (cat === 'problem') problem++
       else if (cat === 'terminal') terminal++
       if (a.tech_status === 'НЕТ СВЯЗИ') noSignal++
-      const canon = effectiveTechStatus(a, watchdogHours, moderationHours)
+      // sidebarTechOf вместо raw effectiveTechStatus: отгоревший «Бан» без
+      // спенда уходит в карточку 'Удалить', карточка «Бан» его не считает —
+      // чтобы числа в сайдбаре и в карточках сходились.
+      const canon = sidebarTechOf(a)
       if (canon) techCounts[canon] = (techCounts[canon] || 0) + 1
     }
     let spendToday = 0, spendYest = 0
@@ -1215,7 +1237,10 @@ async function commitEdit() {
   const techStatusGroups = {}
   let noScriptCount = 0
   for (const a of cohort) {
-    const canon = effectiveTechStatus(a, watchdogHours, moderationHours)
+    // sidebarTechOf: отгоревший «Бан» (нет спенда сегодня/вчера) → 'Удалить';
+    // 'Новые' (пустой eff) считается отдельно через noScriptCount, чтобы
+    // дальше быть вкорпорированным в sidebarTechGroups.
+    const canon = sidebarTechOf(a)
     if (!canon) { noScriptCount++; continue }
     techStatusGroups[canon] = (techStatusGroups[canon] || 0) + 1
   }
@@ -1223,7 +1248,7 @@ async function commitEdit() {
   // «Модерация» (вычисляемая) — в самом начале (нейтральный/процесс), «Бан»
   // (вычисляемый) — в самом конце как самый терминальный. Этот список —
   // источник правды для КАРТОЧЕК ДАШБОРДА (только реальные тех-состояния).
-  const TECH_STATUS_ORDER = ['Модерация','Крутит','Отклонены','Бюджет','Пауза/Оплата','ПРОВЕРЬ','НЕТ СВЯЗИ','Бан']
+  const TECH_STATUS_ORDER = ['Модерация','Крутит','Отклонены','Бюджет','Пауза/Оплата','ПРОВЕРЬ','НЕТ СВЯЗИ','Бан','Удалить']
   function sortByOrder(order) {
     return (a, b) => {
       const ia = order.indexOf(a), ib = order.indexOf(b)
