@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { api } from '../lib/api'
 import { useAuth } from '../lib/useAuth'
 import { applyTheme, cacheTheme } from '../lib/applyTheme'
+import { THEME_PRESETS, presetToConfig } from '../lib/themePresets'
 
 // Пресеты акцента — все безопасны для белого текста на кнопках (mid/deep тона).
 const ACCENT_PRESETS = ['#5b6ef5','#4556e0','#0ea5e9','#14b8a6','#22a06b','#8b5cf6','#e0457b','#d9772b']
@@ -171,6 +172,11 @@ export default function Settings() {
   function patchTheme(patch) { return persistTheme({ ...theme, ...patch }) }
   function patchCover(zone, patch) {
     return persistTheme({ ...theme, [zone]: { ...(theme[zone] || {}), ...patch } })
+  }
+  // Применить весь пресет галереи разом (палитра + обложки + градиент фона).
+  // Тумблер анимации сохраняем как был.
+  async function applyPreset(p) {
+    if (await persistTheme(presetToConfig(p, { animatedBg: theme.animatedBg }))) showToast(`Тема «${p.name}» ✓`)
   }
   async function resetTheme() {
     if (!confirm('Сбросить тему к стандартной?')) return
@@ -520,7 +526,39 @@ export default function Settings() {
         {/* ТЕМА */}
         <div className="card">
           <h2>🎨 Тема</h2>
-          <div className="hint" style={{marginBottom:12}}>Акцентный цвет применяется к кнопкам, активным вкладкам, ссылкам и выделениям на всех страницах. Обложка — только для шапки и сайдбара; таблицы и статус-цвета (бан/крутит/модерация) не меняются. Пусто = стандартный вид.</div>
+          <div className="hint" style={{marginBottom:12}}>Готовые палитры применяются ко всему интерфейсу (акцент, шапка, сайдбар, мягкий фон страницы). Таблицы со спендом/статусами всегда на сплошной поверхности и читаемы; статус-цвета (бан/крутит/модерация) не меняются. Пусто = стандартный вид.</div>
+
+          {/* Галерея пресетов */}
+          <div style={{fontSize:12,color:'var(--t2)',marginBottom:8}}>Галерея тем</div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(118px,1fr))',gap:10,marginBottom:16}}>
+            {THEME_PRESETS.map(p => {
+              const active = theme.preset === p.id
+              return (
+                <button key={p.id} onClick={()=>applyPreset(p)} title={p.name}
+                  style={{padding:0,border:active?'2px solid var(--acc)':'1px solid var(--bd)',borderRadius:10,overflow:'hidden',cursor:'pointer',background:'none',textAlign:'left'}}>
+                  <div style={{height:54,background:p.pageBg,position:'relative'}}>
+                    {/* мини-превью: полоска шапки + точка акцента */}
+                    <div style={{position:'absolute',top:0,left:0,right:0,height:14,background:p.topbarBg}}/>
+                    <div style={{position:'absolute',bottom:8,left:8,width:18,height:18,borderRadius:'50%',background:p.accent,boxShadow:'0 0 0 2px rgba(0,0,0,.25)'}}/>
+                  </div>
+                  <div style={{padding:'5px 8px',fontSize:11,color:'var(--t)',background:'var(--s2)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                    <span>{p.name}</span>{active && <span style={{color:'var(--acc)'}}>✓</span>}
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+
+          {/* Анимированный фон (слой 3) */}
+          <label style={{display:'flex',alignItems:'flex-start',gap:10,cursor:'pointer',padding:'10px 0',borderTop:'1px solid var(--bd)'}}>
+            <input type="checkbox" checked={theme.animatedBg===true} onChange={e=>patchTheme({ animatedBg: e.target.checked })} style={{marginTop:3}}/>
+            <span>
+              <div style={{fontSize:13,color:'var(--t)',fontWeight:500}}>Анимированный фон (премиум)</div>
+              <div className="hint" style={{marginTop:3}}>Медленно «дышащий» градиент за контентом — только для тем с градиентным фоном. Не за таблицами. Уважает системную настройку «уменьшить движение». По умолчанию выкл.</div>
+            </span>
+          </label>
+
+          <div style={{borderTop:'1px solid var(--bd)',paddingTop:12,marginTop:8,marginBottom:4,fontSize:11,color:'var(--t3)',textTransform:'uppercase',letterSpacing:'.05em'}}>Тонкая настройка</div>
 
           {/* Акцент */}
           <div style={{fontSize:12,color:'var(--t2)',marginBottom:6}}>Акцентный цвет</div>

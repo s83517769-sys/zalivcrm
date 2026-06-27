@@ -1,0 +1,38 @@
+/* Декоративный фоновый слой темы (слои 2-3). Один fixed-элемент за всем
+   контентом (z-index:-1). Контент с прозрачными обёртками (.app, .auth-wrap)
+   показывает его; непрозрачные таблицы/карточки/шапка перекрывают — данные
+   НИКОГДА не поверх обоев. pointer-events:none — не перехватывает клики. */
+#zcrm-theme-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: cover;
+  /* по умолчанию пусто (display:none ставит applyTheme) */
+}
+
+/* Анимированный фон (слой 3) — медленный «дышащий» градиент.
+   Только background-position на ОДНОМ fixed-элементе, без layout/контента →
+   дёшево. Включается только для pageBg.type==='gradient' (data-anim="on"). */
+#zcrm-theme-bg[data-anim="on"] {
+  background-size: 400% 400%;
+  animation: zcrmGradShift 22s ease-in-out infinite;
+}
+
+@keyframes zcrmGradShift {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+/* Уважаем системную просьбу о меньшем движении — статичный градиент без анимации. */
+@media (prefers-reduced-motion: reduce) {
+  #zcrm-theme-bg[data-anim="on"] { animation: none; }
+}
+
+/* На узких экранах смягчаем (медленнее) — меньше нагрузки/отвлечения. */
+@media (max-width: 640px) {
+  #zcrm-theme-bg[data-anim="on"] { animation-duration: 34s; }
+}

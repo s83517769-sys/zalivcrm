@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { api } from '../lib/api'
 import { applyTheme, cachedTheme, cacheTheme } from '../lib/applyTheme'
+import '../styles/theme-bg.css'
 
 // Кастомный App — единая точка применения per-user темы на ВСЕХ страницах
 // (общего layout в проекте нет). Сначала мгновенно применяем кэш из
@@ -19,5 +20,11 @@ export default function App({ Component, pageProps }) {
       .catch(() => {}) // на пре-авторизационных страницах настроек нет — остаётся кэш/дефолт
   }, [])
 
-  return <Component {...pageProps} />
+  return (
+    <>
+      {/* Декоративный фоновый слой (за всем контентом). Стиль/анимацию задаёт applyTheme. */}
+      <div id="zcrm-theme-bg" style={{ display: 'none' }} />
+      <Component {...pageProps} />
+    </>
+  )
 }
