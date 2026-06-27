@@ -3,11 +3,6 @@ import Head from 'next/head'
 import Link from 'next/link'
 import { api } from '../lib/api'
 import { useAuth } from '../lib/useAuth'
-import { applyTheme, cacheTheme } from '../lib/applyTheme'
-import { THEME_PRESETS, presetToConfig } from '../lib/themePresets'
-
-// Пресеты акцента — все безопасны для белого текста на кнопках (mid/deep тона).
-const ACCENT_PRESETS = ['#5b6ef5','#4556e0','#0ea5e9','#14b8a6','#22a06b','#8b5cf6','#e0457b','#d9772b']
 
 const CATEGORIES = [
   { k:'active',   l:'Актив',    c:'#22d17a' },
@@ -40,7 +35,6 @@ export default function Settings() {
   const [newRate, setNewRate] = useState({ cur:'', val:'' })
   const [fxMeta, setFxMeta] = useState({})   // { updated_at, source, fx_date, manual:[] }
   const [fxBusy, setFxBusy] = useState(false)
-  const [theme, setTheme] = useState({})     // theme_config: { accent, header:{mode,color,image}, sidebar:{...} }
 
   const [newStatus, setNewStatus] = useState({ name:'', color:'#5b6ef5', category:'active' })
   const [newGroup, setNewGroup] = useState({ prefix:'', color:'#5b6ef5' })
@@ -70,7 +64,6 @@ export default function Settings() {
       setRowRules(s.settings.row_rules || [])
       setRates({ USD:1, ...(s.settings.currency_rates || {}) })
       setFxMeta(s.settings.fx_meta || {})
-      setTheme(s.settings.theme_config || {})
       if (s.settings.user_timezone) setUserTz(s.settings.user_timezone)
       setSpendByUserTz(s.settings.spend_by_user_tz === true)
     }
@@ -159,28 +152,6 @@ export default function Settings() {
     const nextMeta = { ...fxMeta, manual }
     setRates(next); setFxMeta(nextMeta)
     if (await saveSettings({ currency_rates: next, fx_meta: nextMeta })) showToast('Валюта удалена')
-  }
-
-  // ── Тема (акцент + обложка) ──
-  // Применяем сразу (живой превью) + кэшируем + пишем в theme_config.
-  async function persistTheme(next) {
-    setTheme(next)
-    applyTheme(next)
-    cacheTheme(next)
-    return saveSettings({ theme_config: next })
-  }
-  function patchTheme(patch) { return persistTheme({ ...theme, ...patch }) }
-  function patchCover(zone, patch) {
-    return persistTheme({ ...theme, [zone]: { ...(theme[zone] || {}), ...patch } })
-  }
-  // Применить весь пресет галереи разом (палитра + обложки + градиент фона).
-  // Тумблер анимации сохраняем как был.
-  async function applyPreset(p) {
-    if (await persistTheme(presetToConfig(p, { animatedBg: theme.animatedBg }))) showToast(`Тема «${p.name}» ✓`)
-  }
-  async function resetTheme() {
-    if (!confirm('Сбросить тему к стандартной?')) return
-    if (await persistTheme({})) showToast('Тема сброшена ✓')
   }
 
   function showToast(msg) { setToast(msg); setTimeout(() => setToast(''), 2200) }
@@ -313,7 +284,7 @@ export default function Settings() {
         body.dark{--bg:#08090d;--s1:#0e0f15;--s2:#13141c;--s3:#191b25;--bd:#252840;--bd2:#2f3355;--t:#dde1f0;--t2:#8892b0;--t3:#4a5275;--acc:#5b6ef5;--acc2:#4556e0}
         body.light{--bg:#f0f2f5;--s1:#ffffff;--s2:#f8f9fb;--s3:#eef0f4;--bd:#dde1eb;--bd2:#c5cad8;--t:#1a1d2e;--t2:#4a5275;--t3:#8892b0;--acc:#4556e0;--acc2:#3445d0}
         body{background:var(--bg);color:var(--t);font-family:'Inter',sans-serif;font-size:13px;min-height:100vh;display:flex;flex-direction:column}
-        .topbar{display:flex;align-items:center;gap:10px;padding:0 16px;height:48px;background:var(--topbar-bg,var(--s1));border-bottom:1px solid var(--bd);position:sticky;top:0;z-index:50;flex-shrink:0}
+        .topbar{display:flex;align-items:center;gap:10px;padding:0 16px;height:48px;background:var(--s1);border-bottom:1px solid var(--bd);position:sticky;top:0;z-index:50;flex-shrink:0}
         .logo{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:500}
         .logo em{color:var(--acc);font-style:normal}
         .nav-link{font-size:12px;color:var(--t3);text-decoration:none;padding:4px 10px;border-radius:4px;transition:all .1s}
@@ -322,7 +293,7 @@ export default function Settings() {
         .sep{width:1px;height:20px;background:var(--bd)}
         .btn{display:inline-flex;align-items:center;gap:4px;background:var(--s2);border:1px solid var(--bd);border-radius:4px;padding:5px 11px;font-size:12px;color:var(--t2);cursor:pointer;white-space:nowrap;outline:none;transition:all .1s;font-family:'Inter',sans-serif}
         .btn:hover{background:var(--s3);color:var(--t)}
-        .btn-acc{background:var(--acc2);border-color:var(--acc);color:var(--acc-fg,#fff);font-weight:500}
+        .btn-acc{background:var(--acc2);border-color:var(--acc);color:#fff;font-weight:500}
         .btn-acc:hover{background:var(--acc)}
         .btn-del{background:rgba(240,85,85,.1);border-color:rgba(240,85,85,.3);color:#f05555}
         .btn-del:hover{background:rgba(240,85,85,.2)}
@@ -520,92 +491,6 @@ export default function Settings() {
                 )}
               </div>
             ))}
-          </div>
-        </div>
-
-        {/* ТЕМА */}
-        <div className="card">
-          <h2>🎨 Тема</h2>
-          <div className="hint" style={{marginBottom:12}}>Готовые палитры применяются ко всему интерфейсу (акцент, шапка, сайдбар, мягкий фон страницы). Таблицы со спендом/статусами всегда на сплошной поверхности и читаемы; статус-цвета (бан/крутит/модерация) не меняются. Пусто = стандартный вид.</div>
-
-          {/* Галерея пресетов */}
-          <div style={{fontSize:12,color:'var(--t2)',marginBottom:8}}>Галерея тем</div>
-          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(118px,1fr))',gap:10,marginBottom:16}}>
-            {THEME_PRESETS.map(p => {
-              const active = theme.preset === p.id
-              return (
-                <button key={p.id} onClick={()=>applyPreset(p)} title={p.name}
-                  style={{padding:0,border:active?'2px solid var(--acc)':'1px solid var(--bd)',borderRadius:10,overflow:'hidden',cursor:'pointer',background:'none',textAlign:'left'}}>
-                  <div style={{height:54,background:p.pageBg,position:'relative'}}>
-                    {/* мини-превью: полоска шапки + точка акцента */}
-                    <div style={{position:'absolute',top:0,left:0,right:0,height:14,background:p.topbarBg}}/>
-                    <div style={{position:'absolute',bottom:8,left:8,width:18,height:18,borderRadius:'50%',background:p.accent,boxShadow:'0 0 0 2px rgba(0,0,0,.25)'}}/>
-                  </div>
-                  <div style={{padding:'5px 8px',fontSize:11,color:'var(--t)',background:'var(--s2)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-                    <span>{p.name}</span>{active && <span style={{color:'var(--acc)'}}>✓</span>}
-                  </div>
-                </button>
-              )
-            })}
-          </div>
-
-          {/* Анимированный фон (слой 3) */}
-          <label style={{display:'flex',alignItems:'flex-start',gap:10,cursor:'pointer',padding:'10px 0',borderTop:'1px solid var(--bd)'}}>
-            <input type="checkbox" checked={theme.animatedBg===true} onChange={e=>patchTheme({ animatedBg: e.target.checked })} style={{marginTop:3}}/>
-            <span>
-              <div style={{fontSize:13,color:'var(--t)',fontWeight:500}}>Анимированный фон (премиум)</div>
-              <div className="hint" style={{marginTop:3}}>Медленно «дышащий» градиент за контентом — только для тем с градиентным фоном. Не за таблицами. Уважает системную настройку «уменьшить движение». По умолчанию выкл.</div>
-            </span>
-          </label>
-
-          <div style={{borderTop:'1px solid var(--bd)',paddingTop:12,marginTop:8,marginBottom:4,fontSize:11,color:'var(--t3)',textTransform:'uppercase',letterSpacing:'.05em'}}>Тонкая настройка</div>
-
-          {/* Акцент */}
-          <div style={{fontSize:12,color:'var(--t2)',marginBottom:6}}>Акцентный цвет</div>
-          <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center',marginBottom:14}}>
-            {ACCENT_PRESETS.map(c => (
-              <button key={c} title={c} onClick={()=>patchTheme({ accent:c })}
-                style={{width:26,height:26,borderRadius:6,background:c,cursor:'pointer',
-                  border: (theme.accent||'').toLowerCase()===c ? '2px solid var(--t)' : '2px solid var(--bd)'}}/>
-            ))}
-            <input type="text" value={theme.accent||''} placeholder="#5b6ef5"
-              onChange={e=>setTheme({...theme, accent:e.target.value})}
-              onBlur={e=>{ const v=e.target.value.trim(); if(!v||/^#[0-9a-fA-F]{6}$/.test(v)) patchTheme({ accent: v||undefined }) }}
-              style={{width:100,background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:6,padding:'7px 9px',color:'var(--t)',fontSize:13,fontFamily:'JetBrains Mono,monospace'}}/>
-            {theme.accent && <button className="btn" onClick={()=>patchTheme({ accent: undefined })}>сброс цвета</button>}
-          </div>
-
-          {/* Обложки шапки и сайдбара */}
-          {[{zone:'header',label:'Шапка (топ-бар)'},{zone:'sidebar',label:'Сайдбар (на «Аккаунтах»)'}].map(({zone,label})=>{
-            const cfg = theme[zone] || {}
-            const mode = cfg.mode || 'none'
-            return (
-              <div key={zone} style={{borderTop:'1px solid var(--bd)',paddingTop:12,marginTop:4}}>
-                <div style={{fontSize:12,color:'var(--t2)',marginBottom:6}}>{label}</div>
-                <div className="row" style={{gap:6,marginBottom:8}}>
-                  {[['none','Нет'],['color','Цвет'],['image','Картинка']].map(([m,l])=>(
-                    <button key={m} className={`btn${mode===m?' btn-acc':''}`} onClick={()=>patchCover(zone,{ mode:m })}>{l}</button>
-                  ))}
-                </div>
-                {mode==='color' && (
-                  <input type="text" value={cfg.color||''} placeholder="#0e0f15"
-                    onChange={e=>setTheme({...theme, [zone]:{...cfg, color:e.target.value}})}
-                    onBlur={e=>{ const v=e.target.value.trim(); if(!v||/^#[0-9a-fA-F]{6}$/.test(v)) patchCover(zone,{ color:v }) }}
-                    style={{width:130,background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:6,padding:'7px 9px',color:'var(--t)',fontSize:13,fontFamily:'JetBrains Mono,monospace'}}/>
-                )}
-                {mode==='image' && (
-                  <input type="text" value={cfg.image||''} placeholder="https://…/cover.jpg"
-                    onChange={e=>setTheme({...theme, [zone]:{...cfg, image:e.target.value}})}
-                    onBlur={e=>patchCover(zone,{ image:e.target.value.trim() })}
-                    style={{width:'100%',maxWidth:420,background:'var(--s2)',border:'1px solid var(--bd)',borderRadius:6,padding:'7px 9px',color:'var(--t)',fontSize:13}}/>
-                )}
-                {mode==='image' && <div className="hint" style={{marginTop:6}}>Поверх картинки накладывается тёмный слой, чтобы логотип и кнопки оставались читаемыми. Только https-ссылки.</div>}
-              </div>
-            )
-          })}
-
-          <div style={{borderTop:'1px solid var(--bd)',paddingTop:12,marginTop:12}}>
-            <button className="btn" onClick={resetTheme}>Сбросить к стандартной</button>
           </div>
         </div>
 

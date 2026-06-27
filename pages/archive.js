@@ -100,7 +100,7 @@ export default function Archive() {
         body.dark{--bg:#08090d;--s1:#0e0f15;--s2:#13141c;--s3:#191b25;--bd:#252840;--bd2:#2f3355;--t:#dde1f0;--t2:#8892b0;--t3:#4a5275;--acc:#5b6ef5}
         body.light{--bg:#f0f2f5;--s1:#ffffff;--s2:#f8f9fb;--s3:#eef0f4;--bd:#dde1eb;--bd2:#c5cad8;--t:#1a1d2e;--t2:#4a5275;--t3:#8892b0;--acc:#4556e0}
         body{background:var(--bg);color:var(--t);font-family:'Inter',sans-serif;font-size:13px;min-height:100vh;display:flex;flex-direction:column}
-        .topbar{display:flex;align-items:center;gap:10px;padding:0 16px;height:48px;background:var(--topbar-bg,var(--s1));border-bottom:1px solid var(--bd);position:sticky;top:0;z-index:50;flex-shrink:0}
+        .topbar{display:flex;align-items:center;gap:10px;padding:0 16px;height:48px;background:var(--s1);border-bottom:1px solid var(--bd);position:sticky;top:0;z-index:50;flex-shrink:0}
         .logo{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:500}
         .logo em{color:var(--acc);font-style:normal}
         .nav-link{font-size:12px;color:var(--t3);text-decoration:none;padding:4px 10px;border-radius:4px;transition:all .1s}
