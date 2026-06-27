@@ -1493,7 +1493,7 @@ async function commitEdit() {
         body.light{--bg:#f0f2f5;--s1:#ffffff;--s2:#f8f9fb;--s3:#eef0f4;--bd:#dde1eb;--bd2:#c5cad8;--t:#1a1d2e;--t2:#4a5275;--t3:#8892b0;--acc:#4556e0;--acc2:#3445d0}
         body{background:var(--bg);color:var(--t);font-family:'Inter',sans-serif;font-size:13px;min-height:100vh}
         .app{display:flex;flex-direction:column;height:100vh;overflow:hidden}
-        .topbar{display:flex;align-items:center;gap:10px;padding:0 16px;height:48px;background:var(--s1);border-bottom:1px solid var(--bd);flex-shrink:0}
+        .topbar{display:flex;align-items:center;gap:10px;padding:0 16px;height:48px;background:var(--topbar-bg,var(--s1));border-bottom:1px solid var(--bd);flex-shrink:0}
         .logo{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:500;letter-spacing:.04em}
         .logo em{color:var(--acc);font-style:normal}
         .live{font-size:10px;color:#22d17a;background:rgba(34,209,122,.1);padding:2px 8px;border-radius:3px;margin-left:8px}
@@ -1520,11 +1520,11 @@ async function commitEdit() {
         .btn{display:inline-flex;align-items:center;gap:4px;background:var(--s2);border:1px solid var(--bd);border-radius:4px;padding:4px 10px;font-size:11px;color:var(--t2);cursor:pointer;font-family:'Inter',sans-serif;white-space:nowrap;outline:none;transition:all .1s}
         .btn:hover{background:var(--s3);color:var(--t)}
         .btn.act{background:rgba(91,110,245,.12);border-color:rgba(91,110,245,.3);color:var(--acc)}
-        .btn-acc{background:var(--acc2);border-color:var(--acc);color:#fff;font-weight:500}
+        .btn-acc{background:var(--acc2);border-color:var(--acc);color:var(--acc-fg,#fff);font-weight:500}
         .btn-acc:hover{background:var(--acc);color:#fff}
         .badge-cnt{background:var(--acc);color:#fff;border-radius:8px;font-size:9px;padding:0 5px;margin-left:2px}
         .body{display:flex;flex:1;overflow:hidden}
-        .sidebar{width:180px;background:var(--s1);border-right:1px solid var(--bd);overflow-y:auto;flex-shrink:0}
+        .sidebar{width:180px;background:var(--sidebar-bg,var(--s1));border-right:1px solid var(--bd);overflow-y:auto;flex-shrink:0}
         .sb-sec{padding:8px 0 4px}
         .sb-lbl{font-size:10px;color:var(--t3);letter-spacing:.1em;text-transform:uppercase;padding:0 12px 4px}
         .sb-tabs{display:flex;gap:0;padding:0 10px 6px;border-bottom:1px solid var(--bd);margin-bottom:6px}
